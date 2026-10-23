@@ -11,6 +11,13 @@ run(){ { echo "\$ $*"; timeout 60 bash -c "$*" 2>&1 | head -n 200; } >> "$SEC"; 
 has(){ command -v "$1" >/dev/null 2>&1; }
 [ "$(id -u)" = 0 ] || warn "запущен не от root — часть проверок (SMART, журналы) неполная. Лучше: sudo bash $0"
 
+# kernel log of the last 30 days is read ONCE (journalctl on big journals is slow); falls back to dmesg
+KLOG=$(mktemp); trap 'rm -f "$SEC" "$KLOG"' EXIT
+{ timeout 60 journalctl -k --since "-30 days" --no-pager -o short-iso 2>/dev/null || dmesg 2>/dev/null; } | tail -n 200000 > "$KLOG"
+[ -s "$KLOG" ] || { dmesg 2>/dev/null | tail -n 50000 > "$KLOG"; }
+kl(){ grep -iE "$1" "$KLOG"; }   # all 30 days
+kl7(){ local d; d=$(date -d '-7 days' +%Y-%m-%d 2>/dev/null); if [ -n "$d" ] && grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$KLOG"; then awk -v d="$d" '$1>=d' "$KLOG" | grep -iE "$1"; else grep -iE "$1" "$KLOG"; fi; }   # last 7 days (dmesg fallback: everything)
+
 sec "System"; run "uname -a; cat /etc/os-release 2>/dev/null | head -3; uptime; who -b"
 up_days=$(awk '{print int($1/86400)}' /proc/uptime)
 
@@ -27,8 +34,8 @@ avail=$(awk '/MemAvailable/{a=$2}/MemTotal/{t=$2}END{print int(a*100/t)}' /proc/
 [ "$avail" -lt 5 ] && bad "свободной памяти почти нет: ${avail}% доступно" || { [ "$avail" -lt 15 ] && warn "мало свободной памяти: ${avail}%"; }
 swp=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)print int((t-f)*100/t); else print 0}' /proc/meminfo)
 [ "$swp" -gt 50 ] && warn "swap занят на ${swp}%"
-oom=$( (journalctl -k --since "-7 days" 2>/dev/null || dmesg 2>/dev/null) | grep -ciE 'out of memory|oom-kill|killed process')
-[ "$oom" -gt 0 ] && bad "за 7 дней OOM (не хватило памяти, процессы убиты): $oom раз" && run "(journalctl -k --since '-7 days' 2>/dev/null || dmesg) | grep -iE 'out of memory|killed process' | tail -15"
+oom=$(kl7 'out of memory|oom-kill|killed process' | wc -l)
+[ "$oom" -gt 0 ] && bad "за 7 дней OOM (не хватило памяти, процессы убиты): $oom раз" && { echo "\$ OOM lines"; kl7 'out of memory|killed process' | tail -15; } >> "$SEC"
 
 sec "Disks: space / inodes"
 run "df -hT -x tmpfs -x devtmpfs -x squashfs -x overlay"
@@ -42,7 +49,8 @@ run "lsblk -o NAME,SIZE,TYPE,MODEL,SERIAL,MOUNTPOINT"
 if has smartctl; then
   for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr)'); do
     run "smartctl -H -A /dev/$d"
-    s=$(smartctl -H /dev/$d 2>/dev/null); echo "$s" | grep -qiE 'FAILED|FAILING' && bad "диск /dev/$d: SMART сообщает о неисправности"
+    s=$(smartctl -H /dev/$d 2>/dev/null); echo "$s" | grep -qiE 'overall-health.*result: *FAILED|SMART Health Status: *(FAIL|IMPENDING)|FAILING_NOW' && bad "диск /dev/$d: SMART сообщает о неисправности"
+    echo "$s" | grep -qiE 'open device.*failed|Permission denied|Unable to detect' && warn "диск /dev/$d: smartctl не смог прочитать (нет прав/виртуальный диск)"
     a=$(smartctl -A /dev/$d 2>/dev/null)
     for attr in Reallocated_Sector_Ct Current_Pending_Sector Offline_Uncorrectable; do
       v=$(echo "$a" | awk -v n="$attr" '$2==n{print $10}'); [ -n "$v" ] && [ "$v" -gt 0 ] 2>/dev/null && bad "диск /dev/$d: $attr = $v (битые сектора)"; done
@@ -50,8 +58,8 @@ if has smartctl; then
     pu=$(echo "$a" | awk -F: '/Percentage Used/{gsub(/[ %]/,"",$2);print $2}'); [ -n "$pu" ] && [ "$pu" -ge 80 ] 2>/dev/null && warn "NVMe /dev/$d: износ ${pu}%"
   done
 else warn "smartctl не установлен — здоровье дисков не проверено (apt/yum install smartmontools)"; fi
-dmerr=$( (journalctl -k --since "-7 days" 2>/dev/null || dmesg 2>/dev/null) | grep -ciE 'I/O error|medium error|blk_update_request|ata[0-9.]+: .*(failed|error)|nvme.*(timeout|reset)')
-[ "$dmerr" -gt 0 ] && bad "ошибки ввода-вывода дисков в журнале ядра за 7 дней: $dmerr" && run "(journalctl -k --since '-7 days' 2>/dev/null || dmesg) | grep -iE 'I/O error|medium error|blk_update_request|nvme.*(timeout|reset)' | tail -15"
+dmerr=$(kl7 'I/O error|medium error|blk_update_request|ata[0-9.]+: .*(failed|error)|nvme.*(timeout|reset)' | wc -l)
+[ "$dmerr" -gt 0 ] && bad "ошибки ввода-вывода дисков в журнале ядра за 7 дней: $dmerr" && { echo "\$ disk I/O error lines"; kl7 'I/O error|medium error|blk_update_request|nvme.*(timeout|reset)' | tail -15; } >> "$SEC"
 
 sec "RAID"
 if [ -r /proc/mdstat ] && grep -q '^md' /proc/mdstat; then
@@ -59,25 +67,25 @@ if [ -r /proc/mdstat ] && grep -q '^md' /proc/mdstat; then
   grep -qE '\[[U_]*_[U_]*\]' /proc/mdstat && bad "программный RAID деградировал (выпал диск): $(grep -B1 -E '\[[U_]*_[U_]*\]' /proc/mdstat | awk '/^md/{print $1}' | tr '\n' ' ')"
   grep -qE 'recovery|resync|reshape' /proc/mdstat && warn "RAID сейчас пересобирается: $(grep -oE '(recovery|resync|reshape) = *[0-9.]+%' /proc/mdstat | head -1)"
 fi
-has zpool && { run "zpool status -x"; zpool status -x 2>/dev/null | grep -q 'all pools are healthy' || bad "ZFS: пул не в порядке (zpool status)"; }
+has zpool && { run "zpool status -x"; zs=$(zpool status -x 2>&1); echo "$zs" | grep -qE 'all pools are healthy|no pools available' || bad "ZFS: пул не в порядке (zpool status)"; }
 
 sec "Crashes, hangs, hardware errors"
 run "journalctl --list-boots 2>/dev/null | tail -10"
 run "last -x reboot shutdown 2>/dev/null | head -15"
 # boots that ended without a clean shutdown = crash/hang/power loss
 if journalctl --list-boots >/dev/null 2>&1; then
-  unclean=0
+  unclean=0; uncl_list=""
   for b in $(journalctl --list-boots 2>/dev/null | awk '{print $1}' | grep -E '^-[0-9]+$' | tail -10); do
-    journalctl -b "$b" -n 60 --no-pager 2>/dev/null | grep -qiE 'reached target.*(shutdown|power-off|reboot)|systemd-shutdown|Journal stopped|Shutting down' || unclean=$((unclean+1)); done
-  [ "$unclean" -gt 0 ] && bad "из последних загрузок $unclean закончились НЕ штатным выключением (зависание/падение/пропало питание)"
+    timeout 20 journalctl -b "$b" -n 60 --no-pager 2>/dev/null | grep -qiE 'reached target.*(shutdown|power-off|reboot)|systemd-shutdown|Journal stopped|Shutting down' || { unclean=$((unclean+1)); uncl_list="$uncl_list [boot $b: $(journalctl --list-boots 2>/dev/null | awk -v b=$b '$1==b{print $4,$5,$6,$7,$8}')]"; }; done
+  [ "$unclean" -gt 0 ] && bad "из последних загрузок $unclean закончились НЕ штатным выключением (зависание/падение/пропало питание):$uncl_list"
 fi
-pan=$( (journalctl -k -b -1 2>/dev/null; journalctl -k --since "-30 days" 2>/dev/null) | grep -ciE 'kernel panic|BUG:|Oops|soft lockup|hard LOCKUP|hung_task|blocked for more than')
-[ "$pan" -gt 0 ] && bad "в журнале ядра зависания/паники/блокировки задач: $pan" && run "journalctl -k --since '-30 days' 2>/dev/null | grep -iE 'kernel panic|BUG:|Oops|soft lockup|hard LOCKUP|blocked for more than' | tail -15"
-mce=$( (journalctl -k --since "-30 days" 2>/dev/null || dmesg) | grep -ciE 'mce:|machine check|EDAC.*(error|CE|UE)|Hardware Error')
-[ "$mce" -gt 0 ] && bad "ошибки железа (память/процессор, MCE/EDAC) за 30 дней: $mce" && run "journalctl -k --since '-30 days' 2>/dev/null | grep -iE 'mce:|machine check|EDAC|Hardware Error' | tail -15"
-thr=$( (journalctl -k --since "-7 days" 2>/dev/null || dmesg) | grep -ciE 'temperature above threshold|throttl')
+pan=$(kl 'kernel panic|\bBUG:|\bOops\b|soft lockup|hard lockup|hung_task|blocked for more than' | wc -l)
+[ "$pan" -gt 0 ] && bad "в журнале ядра зависания/паники/блокировки задач: $pan" && { echo "\$ panic/lockup lines"; kl 'kernel panic|\bBUG:|\bOops\b|soft lockup|hard lockup|blocked for more than' | tail -15; } >> "$SEC"
+mce=$(kl '\bmce:|machine check|hardware error|EDAC.*([0-9]+ (CE|UE)\b|uncorrect|correctable error|read error)' | grep -viE 'CPU supports|MCE banks|mce: .*(init|enabled)' | wc -l)
+[ "$mce" -gt 0 ] && bad "ошибки железа (память/процессор, MCE/EDAC) за 30 дней: $mce" && { echo "\$ MCE/EDAC lines"; kl '\bmce:|machine check|hardware error|EDAC.*([0-9]+ (CE|UE)\b|uncorrect|correctable error|read error)' | grep -viE 'CPU supports|MCE banks' | tail -15; } >> "$SEC"
+thr=$(kl7 'temperature above threshold|cpu.*throttl' | wc -l)
 [ "$thr" -gt 0 ] && warn "перегрев/троттлинг CPU за 7 дней: $thr"
-pw=$(journalctl --since "-30 days" 2>/dev/null | grep -cE 'power (failure|loss)|[Oo]n battery|\bUPS\b')
+pw=$( { kl 'power (failure|loss)|on battery'; timeout 20 journalctl -u 'ups*' -u nut-monitor -u apcupsd --since "-30 days" --no-pager 2>/dev/null | grep -iE 'power (failure|loss)|on battery'; } | wc -l)
 [ "$pw" -gt 0 ] && warn "упоминания питания/ИБП в журнале за 30 дней: $pw"
 
 sec "Services"
@@ -93,8 +101,8 @@ timeout 5 getent hosts google.com >/dev/null || bad "DNS не работает (
 timeout 5 bash -c '</dev/tcp/1.1.1.1/443' 2>/dev/null || bad "нет выхода в интернет (1.1.1.1:443)"
 
 sec "Security quick look"
-run "journalctl -u ssh -u sshd --since '-1 day' 2>/dev/null | grep -c 'Failed password' ; grep -E '^(PermitRootLogin|PasswordAuthentication)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null"
-fails=$(journalctl -u ssh -u sshd --since "-1 day" 2>/dev/null | grep -c 'Failed password')
+fails=$(timeout 30 journalctl -u ssh -u sshd --since "-1 day" --no-pager 2>/dev/null | grep -c 'Failed password')
+run "echo \"failed ssh passwords last 24h: $fails\"; grep -E '^(PermitRootLogin|PasswordAuthentication)' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null"
 [ "${fails:-0}" -gt 500 ] && warn "за сутки $fails неудачных входов по SSH (подбор пароля) — нужен вход по ключу/fail2ban"
 run "awk -F: '\$3==0{print \"uid0:\",\$1}' /etc/passwd"
 [ "$(awk -F: '$3==0' /etc/passwd | wc -l)" -gt 1 ] && bad "больше одного пользователя с правами root (uid 0)"
