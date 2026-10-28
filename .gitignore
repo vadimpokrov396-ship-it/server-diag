@@ -1,3 +1,6 @@
 test/
 diag_*.txt
 reports_*/
+cases/
+__pycache__/
+api_run_28_10/

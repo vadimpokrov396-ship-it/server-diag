@@ -4,6 +4,8 @@
 
 [English version below ↓](#english)
 
+📖 Статья для начинающих: [docs/ARTICLE_RU.md](docs/ARTICLE_RU.md) · [на сайте serverrental.store](https://serverrental.store/Server-diag:_%D0%B4%D0%B8%D0%B0%D0%B3%D0%BD%D0%BE%D1%81%D1%82%D0%B8%D0%BA%D0%B0_%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80%D0%B0_Linux_%D0%B8_Windows_%D0%B7%D0%B0_%D0%BC%D0%B8%D0%BD%D1%83%D1%82%D1%83_%D0%BF%D1%80%D0%BE%D1%81%D1%82%D1%8B%D0%BC%D0%B8_%D1%81%D0%BB%D0%BE%D0%B2%D0%B0%D0%BC%D0%B8)
+
 ---
 
 ## Быстрый старт
@@ -157,6 +159,8 @@ sudo bash server-diag-linux.sh
 # English
 
 **server-diag** checks the health of a server or PC and explains in **plain words** what is wrong. You get a traffic light for six areas, the **main cause** and **what to do: 1) 2) 3)**. It is **read-only**: it installs nothing, restarts nothing and changes no settings.
+
+📖 Beginner-friendly article: [docs/ARTICLE_EN.md](docs/ARTICLE_EN.md) · [on serverrental.store](https://serverrental.store/Server-diag:_diagnose_a_Linux_or_Windows_server_in_one_minute,_in_plain_words)
 
 ## Quick start
 
