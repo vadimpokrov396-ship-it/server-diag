@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>server-diag: WIN-SERVER01 - 2026-10-28 05:16</title>
+<style>body{font:15px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:0;background:#f3f5f8;color:#1c2330}main{max-width:980px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:12px;padding:18px 22px;margin:0 0 16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:0 0 10px}.meta{color:#5b6475;font-size:13.5px}.verdict{font-size:21px;font-weight:700;padding:16px 20px;border-radius:12px;margin:0 0 16px}.v2{background:#fde8e8;color:#9b1c1c}.v1{background:#fdf3d8;color:#7a4d00}.v0{background:#e3f5e9;color:#1d6436}table{border-collapse:collapse;width:100%}td{padding:9px 6px;border-bottom:1px solid #eef0f3;vertical-align:top}td.l{font-size:19px;width:30px}td.a{font-weight:600;width:240px}.f{border-left:5px solid #c9ced6;padding:10px 14px;margin:12px 0;background:#fafbfc;border-radius:8px}.f.s2{border-color:#e02424}.f.s1{border-color:#e3a008}.f h3{margin:0 0 6px;font-size:16px}ol{margin:6px 0 4px 22px;padding:0}li{margin:3px 0}.conf{font-size:12.5px;color:#5b6475}pre{background:#101820;color:#d7e3f1;padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-word}details{margin:8px 0}summary{cursor:pointer;font-weight:600}ul{margin:6px 0 0 20px;padding:0}footer{color:#5b6475;font-size:12.5px;text-align:center;margin:18px 0}</style></head><body><main>
+<div class="card"><h1>Windows diagnostics WIN-SERVER01</h1><div class="meta">2026-10-28 05:16 &#183; Microsoft Windows Server 2025 Standard (build 26100) &#183; 8 logical CPUs &#183; 23 GB RAM &#183; virtual (OpenStack Foundation OpenStack Nova), up 34d 0h</div></div>
+<div class="verdict v2">🔴 Result: A SERIOUS PROBLEM WAS FOUND</div>
+<div class="card"><h2>Traffic light by area</h2><table>
+<tr><td class="l">🟢</td><td class="a">Disks</td><td>OK - at most 59% used (fullest: C:, 31 GB free); SMART n/a (virtual)</td></tr>
+<tr><td class="l">🔴</td><td class="a">Memory (RAM)</td><td>Windows ran low on memory: 14 time(s) in 30 days, 14 in the last 7 days</td></tr>
+<tr><td class="l">🟢</td><td class="a">CPU &amp; temperature</td><td>OK - 44% busy (3 s sample), 8 logical CPUs</td></tr>
+<tr><td class="l">🟢</td><td class="a">Crashes &amp; reboots</td><td>OK - no unexpected shutdowns or blue screens in 30 days; up 34d 0h</td></tr>
+<tr><td class="l">🟡</td><td class="a">Services &amp; programs</td><td>Programs crashed or hung in the last 7 days: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1</td></tr>
+<tr><td class="l">🟢</td><td class="a">Network &amp; time</td><td>OK - internet and DNS work, ping 5 ms, clock accurate (&#177;0 s)</td></tr>
+</table></div>
+<div class="card"><h2>Main cause and what to do</h2>
+<div class="f s2"><h3>🔴 Windows ran low on memory: 14 time(s) in 30 days, 14 in the last 7 days</h3><div class="conf">Memory (RAM) · confidence: high</div><p>When memory runs out, programs crash with errors and Windows slows down badly. The biggest consumers were: chrome.exe, WindowsTerminal.exe.</p><ol>
+<li>See who uses memory now: WindowsTerminal 2.7 GB, chrome 2.4 GB (46 procs), mspaint 1.6 GB (40 procs), svchost 1.2 GB (80 procs), cmd 409 MB (24 procs)</li>
+<li>Limit the hungry program (for example, max server memory for SQL Server) or look for a leak (does usage grow over time?)</li>
+<li>If the load legitimately grew, add RAM (a bigger plan) or enlarge the page file</li>
+</ol>
+<details><summary>Evidence</summary><pre>2026-10-27 05:14 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 5521657856 bytes, chrome....
+2026-10-22 19:59 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4133064704 bytes, chrome....
+2026-10-22 19:42 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4134047744 bytes, chrome....
+2026-10-22 17:54 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4096425984 bytes, chrome....</pre></details>
+</div>
+<h2 style="margin-top:18px">Also found</h2>
+<div class="f s1"><h3>🟡 Programs crashed or hung in the last 7 days: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1</h3><div class="conf">Services &amp; programs · confidence: high</div><p>A program crashed or stopped responding. If it is your site, bot or database, it was down at those moments. 3 of them happened at the same time as a low-memory event (see the memory item) - that is the likely cause.</p><ol>
+<li>Update these programs to current versions</li>
+<li>See details: Event Viewer → Windows Logs → Application (events 1000/1002)</li>
+<li>If many programs crash at once - test RAM (mdsched) and the disk</li>
+</ol>
+<details><summary>Evidence</summary><pre>2026-10-27 05:14 [Application Error 1000] Faulting application name: ctfmon.exe, version: 10.0.26100.3037, time stamp: 0x5a5e47ae Faulting module name: MsCtfMonitor.DLL, version: 10.0.26100.3037, time stamp: 0x1724d214 Exc...
+2026-10-27 05:14 [Application Error 1000] Faulting application name: LogonUI.exe, version: 10.0.26100.1882, time stamp: 0x484c2661 Faulting module name: Windows.UI.Xaml.dll, version: 10.0.26100.3037, time stamp: 0x659a665a...
+2026-10-22 19:59 [Application Error 1000] Faulting application name: chrome.exe, version: 154.0.8037.93, time stamp: 0x6abad9e6 Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0x95e6c489 Exception co...</pre></details>
+</div>
+</div>
+<div class="card"><h2>Notes / not checked</h2><ul>
+<li>The server is virtual: physical disk health and temperatures are the provider&#39;s job - this is normal.</li>
+<li>Microsoft Store apps fail to update: 9XXXXXXXXXXX-Contoso.App, 9N0DX20HK701-Microsoft.WindowsTerminal - error 0x80073D02 (0x80073D02 - the app was running during the update; it will update once closed).</li>
+</ul></div>
+<div class="card"><h2>Технические подробности / Technical details</h2><p class="meta">В этом публичном примере сырые данные (списки процессов, открытые порты) удалены. В вашем отчёте они будут здесь. / Raw data (process lists, open ports) are removed from this public example; your report has them here.</p></div>
+<footer>server-diag 2.0 · read-only - the script changed nothing; the check took 28 s. · <a href="https://github.com/vadimpokrov396-ship-it/server-diag">github.com/vadimpokrov396-ship-it/server-diag</a></footer></main></body></html>

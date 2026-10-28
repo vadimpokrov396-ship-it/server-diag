@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # server-diag.sh — read-only health check of a Linux server with a plain-language verdict (Russian / English).
-# Project: https://github.com/vadimpokrov396-ship-it/server-diag   (MIT license)
+# Project: https://github.com/vadimpokrov396-ship-it/server-diag
 #
 #   curl -fsSL https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main/server-diag.sh | sudo bash
 #   sudo bash server-diag.sh [--full] [--lang en] [--out DIR] [--no-html] [--no-color]

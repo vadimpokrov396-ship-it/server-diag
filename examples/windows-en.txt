@@ -1,0 +1,47 @@
+
+========================================================================
+ WINDOWS DIAGNOSTICS · WIN-SERVER01 · 2026-10-28 05:16
+ Microsoft Windows Server 2025 Standard (build 26100) · 8 logical CPUs · 23 GB RAM · virtual (OpenStack Foundation OpenStack Nova), up 34d 0h
+========================================================================
+
+ RESULT: A SERIOUS PROBLEM WAS FOUND
+
+ ● OK        Disks                OK - at most 59% used (fullest: C:, 31 GB free); SMART n/a (virtual)
+ ● PROBLEM   Memory (RAM)         Windows ran low on memory: 14 time(s) in 30 days, 14 in the last 7 days
+ ● OK        CPU & temperature    OK - 44% busy (3 s sample), 8 logical CPUs
+ ● OK        Crashes & reboots    OK - no unexpected shutdowns or blue screens in 30 days; up 34d 0h
+ ● WARNING   Services & programs  Programs crashed or hung in the last 7 days: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1
+ ● OK        Network & time       OK - internet and DNS work, ping 5 ms, clock accurate (±0 s)
+
+ MAIN CAUSE  (confidence: high)
+   PROBLEM: Windows ran low on memory: 14 time(s) in 30 days, 14 in the last 7 days
+   When memory runs out, programs crash with errors and Windows slows down badly. The biggest consumers were: chrome.exe, WindowsTerminal.exe.
+
+ WHAT TO DO
+   1) See who uses memory now: WindowsTerminal 2.7 GB, chrome 2.4 GB (46 procs), mspaint 1.6 GB (40 procs), svchost 1.2 GB (80 procs), cmd 409 MB (24 procs)
+   2) Limit the hungry program (for example, max server memory for SQL Server) or look for a leak (does usage grow over time?)
+   3) If the load legitimately grew, add RAM (a bigger plan) or enlarge the page file
+
+ ALSO FOUND
+   ● Programs crashed or hung in the last 7 days: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1
+      -> Update these programs to current versions
+
+ NOTES / NOT CHECKED
+   - The server is virtual: physical disk health and temperatures are the provider's job - this is normal.
+   - Microsoft Store apps fail to update: 9XXXXXXXXXXX-Contoso.App, 9N0DX20HK701-Microsoft.WindowsTerminal - error 0x80073D02 (0x80073D02 - the app was running during the update; it will update once closed).
+
+ TECHNICAL DETAILS (key facts)
+   cpu: 44% busy (3 s), queue 3; top cpu: MpSigStub 12%, mspaint 10%, chrome 3%, MoUsoCoreWorker 3%, svchost 1%
+   ram: available 8.6 GB / 23 GB (37%), commit 69%, page-ins 1/s; top ram: WindowsTerminal 2.7 GB, chrome 2.4 GB (46 procs), mspaint 1.6 GB (40 procs), svchost 1.2 GB (80 procs), cmd 409 MB (24 procs)
+   disk: 0,4 ms per operation at 123 IOPS (3 s sample)
+   [Memory (RAM)] 2026-10-27 05:14 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+      2026-10-22 19:59 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+      2026-10-22 19:42 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+   [Services & programs] 2026-10-27 05:14 [Application Error 1000] Faulting application name: ctfmon.exe, version: 10.0.26100.3037, time stamp: 0x5a5e47ae Faulting module name: MsCtfMonitor.DLL, version: 10.0.26100.3037, time...
+      2026-10-27 05:14 [Application Error 1000] Faulting application name: LogonUI.exe, version: 10.0.26100.1882, time stamp: 0x484c2661 Faulting module name: Windows.UI.Xaml.dll, version: 10.0.26100.3037, ...
+      2026-10-22 19:59 [Application Error 1000] Faulting application name: chrome.exe, version: 154.0.8037.93, time stamp: 0x6abad9e6 Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0...
+
+ Full report saved: C:\Users\Administrator\Desktop\server-diag-report-WIN-SERVER01-2026-10-28-051638.html
+   Open it in a browser or send it to an admin.
+ The check took 28 s. The script changed nothing in the system.
+

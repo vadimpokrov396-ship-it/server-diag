@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>server-diag: my-vps — 28.10.2026 02:15</title>
+<style>
+body{font:15px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:0;background:#f3f5f8;color:#1c2330}
+main{max-width:980px;margin:0 auto;padding:22px}
+.card{background:#fff;border-radius:12px;padding:18px 22px;margin:0 0 16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:0 0 10px}.meta{color:#5b6475;font-size:13.5px}
+.verdict{font-size:21px;font-weight:700;padding:16px 20px;border-radius:12px;margin:0 0 16px}
+.v2{background:#fde8e8;color:#9b1c1c}.v1{background:#fdf3d8;color:#7a4d00}.v0{background:#e3f5e9;color:#1d6436}
+table{border-collapse:collapse;width:100%}td{padding:9px 6px;border-bottom:1px solid #eef0f3;vertical-align:top}
+td.l{font-size:19px;width:30px}td.a{font-weight:600;width:240px}
+.f{border-left:5px solid #c9ced6;padding:10px 14px;margin:12px 0;background:#fafbfc;border-radius:8px}
+.f.s2{border-color:#e02424}.f.s1{border-color:#e3a008}.f h3{margin:0 0 6px;font-size:16px}
+ol{margin:6px 0 4px 22px;padding:0}li{margin:3px 0}.conf{font-size:12.5px;color:#5b6475}
+pre{background:#101820;color:#d7e3f1;padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+details{margin:8px 0}summary{cursor:pointer;font-weight:600}ul{margin:6px 0 0 20px;padding:0}
+footer{color:#5b6475;font-size:12.5px;text-align:center;margin:18px 0}
+</style></head><body><main>
+<div class="card"><h1>Диагностика сервера my-vps</h1><div class="meta">28.10.2026 02:15 · Ubuntu 24.04.4 LTS · ядро 6.8.0-147-generic · 6 ядер · 11 ГБ ОЗУ · виртуальный (kvm), работает 5 дн. 8 ч</div></div>
+<div class="verdict v1">🟡 Итог: РАБОТАЕТ, НО ЕСТЬ НА ЧТО ОБРАТИТЬ ВНИМАНИЕ</div>
+<div class="card"><h2>Светофор по областям</h2><table>
+<tr><td class="l">🟢</td><td class="a">Диски</td><td>норма — занято не больше 89% (самый заполненный: /, свободно 11 ГБ); SMART не нужен (VPS)</td></tr>
+<tr><td class="l">🟢</td><td class="a">Память (ОЗУ)</td><td>норма — доступно 7.8 ГБ из 11 ГБ (68%), swap занят на 42%, нехватки памяти (OOM) за 7 дней не было</td></tr>
+<tr><td class="l">🟢</td><td class="a">Процессор и температура</td><td>норма — нагрузка 3.05 на 6 ядер (CPU занят 27%), steal 0%</td></tr>
+<tr><td class="l">🟢</td><td class="a">Сбои и перезагрузки</td><td>норма — сбоев не видно, работает без перезагрузки 5 дн. 8 ч; журнал хранит только 1 дн. 0 ч, более ранние события неизвестны</td></tr>
+<tr><td class="l">🟡</td><td class="a">Службы и программы</td><td>Служба постоянно падает и перезапускается: my-app.service ×45119 (с момента загрузки)</td></tr>
+<tr><td class="l">🟢</td><td class="a">Сеть и время</td><td>норма — интернет и DNS работают, ping 3 ms, часы точные (±0 с)</td></tr>
+</table></div>
+<div class="card"><h2>Главная причина и что сделать</h2>
+<div class="f s1"><h3>🟡 Служба постоянно падает и перезапускается: my-app.service ×45119 (с момента загрузки)</h3><div class="conf">Службы и программы · уверенность: высокая</div><p>systemd поднимает службу после каждого падения, поэтому снаружи она «вроде работает», но в моменты падений запросы теряются.</p><ol>
+<li>Посмотрите, почему падает: sudo journalctl -u my-app.service -n 80</li>
+<li>Частые причины — нехватка памяти, ошибка в конфиге, недоступна база/сеть</li>
+<li>Если служба больше не нужна — остановите и отключите её: sudo systemctl disable --now my-app.service</li>
+</ol>
+<details><summary>Доказательства</summary><pre>45119 my-app.service</pre></details>
+</div>
+</div>
+<div class="card"><h2>К сведению / не проверено</h2><ul>
+<li>Журнал событий хранит всего 1 дн. 0 ч (с 27.10.2026 02:05) — сбои до этой даты не видны. Обычно журнал ограничен по размеру (SystemMaxUse в /etc/systemd/journald.conf). Возможно, его забивает служба, которая постоянно перезапускается (см. выше).</li>
+<li>Сервер виртуальный (kvm): здоровье физических дисков (SMART) и температуру контролирует хостер — это нормально.</li>
+<li>Единичные падения программ за 7 дней: daemon.py ×1 (подробности: /var/crash, coredumpctl list).</li>
+</ul></div>
+<div class="card"><h2>Технические подробности / Technical details</h2><p class="meta">В этом публичном примере сырые данные (списки процессов, открытые порты) удалены. В вашем отчёте они будут здесь. / Raw data (process lists, open ports) are removed from this public example; your report has them here.</p></div>
+<footer>server-diag 2.0 · только чтение — скрипт ничего не менял на сервере; проверка заняла 5 сек. · <a href="https://github.com/vadimpokrov396-ship-it/server-diag">github.com/vadimpokrov396-ship-it/server-diag</a></footer>
+</main></body></html>

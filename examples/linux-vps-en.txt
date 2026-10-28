@@ -1,0 +1,40 @@
+
+══════════════════════════════════════════════════════════════════════
+ SERVER DIAGNOSTICS · my-vps · 2026-10-28 02:15
+ Ubuntu 24.04.4 LTS · kernel 6.8.0-147-generic · 6 cores · 11 GB RAM · virtual (kvm), up 5d 8h
+══════════════════════════════════════════════════════════════════════
+
+ RESULT: 🟡 WORKING, BUT SOME THINGS NEED ATTENTION
+
+ 🟢 Disks                OK — at most 89% used (fullest: /, 11 GB free); SMART n/a (virtual)
+ 🟢 Memory (RAM)         OK — 8.0 GB of 11 GB available (69%), swap 42% used, no out-of-memory kills in 7 days
+ 🟢 CPU & temperature    OK — load 3.02 on 6 cores (CPU 26% busy), steal 0%
+ 🟢 Crashes & reboots    OK — no crashes seen, up 5d 8h; the journal keeps only 1d 0h, earlier events are unknown
+ 🟡 Services & programs  A service keeps crashing and restarting: my-app.service ×45119 (since boot)
+ 🟢 Network & time       OK — internet and DNS work, ping 3 ms, clock accurate (±0 s)
+
+ MAIN CAUSE  (confidence: high)
+   🟡 A service keeps crashing and restarting: my-app.service ×45119 (since boot)
+   systemd restarts the service after each crash, so it “seems to work”, but requests are lost during the crashes.
+
+ WHAT TO DO
+   1) See why it crashes: sudo journalctl -u my-app.service -n 80
+   2) Common causes — out of memory, a config error, an unreachable database/network
+   3) If the service is no longer needed, stop and disable it: sudo systemctl disable --now my-app.service
+
+ NOTES / NOT CHECKED
+   • The event journal covers only 1d 0h (since 2026-10-27 02:05) — earlier crashes are invisible. The journal is usually capped by size (SystemMaxUse in /etc/systemd/journald.conf). It may be flooded by the service that keeps restarting (see above).
+   • The server is virtual (kvm): physical disk health (SMART) and temperatures are the provider's job — this is normal.
+   • Isolated program crashes in 7 days: daemon.py ×1 (details: /var/crash, coredumpctl list).
+
+ TECHNICAL DETAILS (key facts)
+   cpu: Intel Core Processor (Haswell, no TSX), load 2.14 3.02 3.30, busy 26% iowait 0% steal 0% (2047 ms sample)
+   top cpu: python3 18%, next-server (v1 2%, kcompactd0 2%, app 1%
+   top ram: app 1.4 GB (2 procs), python3 853 MB (28 procs), node 593 MB (6 procs), chrome 576 MB (11 procs), python 385 MB (7 procs)
+   ram: avail 8.0 GB / 11 GB, swap 2.6 GB / 6.0 GB, swap io 0 pages/s, psi mem 0.00 io 0.68
+   [Services & programs] 45119 my-app.service
+
+ 📄 Full report saved: /root/server-diag-report-my-vps-2026-10-28-021522.html
+    Open it in a browser (download it via WinSCP/FileZilla/scp if the server is remote) or send it to an admin.
+ The check took 5 s. The script changed nothing on the server.
+

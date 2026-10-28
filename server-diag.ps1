@@ -1,7 +1,7 @@
 ﻿#Requires -Version 3.0
 <#
 server-diag.ps1 - read-only health check of a Windows server or PC with a plain-language verdict (Russian / English).
-Project: https://github.com/vadimpokrov396-ship-it/server-diag   (MIT license)
+Project: https://github.com/vadimpokrov396-ship-it/server-diag
 
 The easy way: double-click ЗАПУСТИ-МЕНЯ.bat (Russian) or RUN-ME.bat (language of Windows). It asks for administrator
 rights (UAC) for the full check; if you decline, a reduced check runs.

@@ -1,0 +1,41 @@
+<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>server-diag: WIN-SERVER01 - 28.10.2026 05:16</title>
+<style>body{font:15px/1.55 -apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:0;background:#f3f5f8;color:#1c2330}main{max-width:980px;margin:0 auto;padding:22px}.card{background:#fff;border-radius:12px;padding:18px 22px;margin:0 0 16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:0 0 10px}.meta{color:#5b6475;font-size:13.5px}.verdict{font-size:21px;font-weight:700;padding:16px 20px;border-radius:12px;margin:0 0 16px}.v2{background:#fde8e8;color:#9b1c1c}.v1{background:#fdf3d8;color:#7a4d00}.v0{background:#e3f5e9;color:#1d6436}table{border-collapse:collapse;width:100%}td{padding:9px 6px;border-bottom:1px solid #eef0f3;vertical-align:top}td.l{font-size:19px;width:30px}td.a{font-weight:600;width:240px}.f{border-left:5px solid #c9ced6;padding:10px 14px;margin:12px 0;background:#fafbfc;border-radius:8px}.f.s2{border-color:#e02424}.f.s1{border-color:#e3a008}.f h3{margin:0 0 6px;font-size:16px}ol{margin:6px 0 4px 22px;padding:0}li{margin:3px 0}.conf{font-size:12.5px;color:#5b6475}pre{background:#101820;color:#d7e3f1;padding:12px;border-radius:8px;overflow:auto;font-size:12.5px;white-space:pre-wrap;word-break:break-word}details{margin:8px 0}summary{cursor:pointer;font-weight:600}ul{margin:6px 0 0 20px;padding:0}footer{color:#5b6475;font-size:12.5px;text-align:center;margin:18px 0}</style></head><body><main>
+<div class="card"><h1>Диагностика Windows WIN-SERVER01</h1><div class="meta">28.10.2026 05:16 &#183; Microsoft Windows Server 2025 Standard (build 26100) &#183; 8 лог. процессоров &#183; 23 ГБ ОЗУ &#183; виртуальный (OpenStack Foundation OpenStack Nova), работает 34 дн. 0 ч</div></div>
+<div class="verdict v2">🔴 Итог: ЕСТЬ СЕРЬЁЗНАЯ ПРОБЛЕМА</div>
+<div class="card"><h2>Светофор по областям</h2><table>
+<tr><td class="l">🟢</td><td class="a">Диски</td><td>норма - занято не больше 58% (самый заполненный: C:, свободно 31 ГБ); SMART не нужен (VPS)</td></tr>
+<tr><td class="l">🔴</td><td class="a">Память (ОЗУ)</td><td>Windows не хватало памяти: 14 раз за 30 дн., из них за 7 дней - 14</td></tr>
+<tr><td class="l">🟢</td><td class="a">Процессор и температура</td><td>норма - занят на 36% (замер 3 сек.), ядер: 8</td></tr>
+<tr><td class="l">🟢</td><td class="a">Сбои и перезагрузки</td><td>норма - внезапных выключений и синих экранов за 30 дн. нет; работает без перезагрузки 34 дн. 0 ч</td></tr>
+<tr><td class="l">🟡</td><td class="a">Службы и программы</td><td>Программы падали или зависали за 7 дней: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1</td></tr>
+<tr><td class="l">🟢</td><td class="a">Сеть и время</td><td>норма - интернет и DNS работают, ping 5 ms, часы точные (&#177;0 с)</td></tr>
+</table></div>
+<div class="card"><h2>Главная причина и что сделать</h2>
+<div class="f s2"><h3>🔴 Windows не хватало памяти: 14 раз за 30 дн., из них за 7 дней - 14</h3><div class="conf">Память (ОЗУ) · уверенность: высокая</div><p>Когда память кончается, программы падают с ошибками, а Windows сильно тормозит. Больше всего памяти тогда занимали: chrome.exe, WindowsTerminal.exe.</p><ol>
+<li>Посмотрите, кто ест память сейчас: WindowsTerminal 2,7 ГБ, chrome 2,3 ГБ (46 проц.), mspaint 1,6 ГБ (40 проц.), svchost 1,2 ГБ (78 проц.), cmd 409 МБ (24 проц.)</li>
+<li>Ограничьте аппетит &#171;прожорливой&#187; программы (например, максимум памяти для SQL Server) или найдите утечку памяти (растёт ли потребление со временем)</li>
+<li>Если нагрузка выросла законно - добавьте оперативной памяти (тариф выше) или увеличьте файл подкачки</li>
+</ol>
+<details><summary>Доказательства</summary><pre>2026-10-27 05:14 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 5521657856 bytes, chrome....
+2026-10-22 19:59 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4133064704 bytes, chrome....
+2026-10-22 19:42 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4134047744 bytes, chrome....
+2026-10-22 17:54 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTerminal.exe (916) consumed 4096425984 bytes, chrome....</pre></details>
+</div>
+<h2 style="margin-top:18px">Ещё замечено</h2>
+<div class="f s1"><h3>🟡 Программы падали или зависали за 7 дней: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1</h3><div class="conf">Службы и программы · уверенность: высокая</div><p>Программа &#171;вылетала&#187; с ошибкой или переставала отвечать. Если это ваш сайт, бот или база - в эти моменты они не работали. 3 из них совпали по времени с нехваткой памяти (см. пункт про память) - скорее всего, причина в ней.</p><ol>
+<li>Обновите эти программы до свежих версий</li>
+<li>Посмотрите подробности: Просмотр событий → Журналы Windows → Приложение (события 1000/1002)</li>
+<li>Если падают многие программы сразу - проверьте память (mdsched) и диск</li>
+</ol>
+<details><summary>Доказательства</summary><pre>2026-10-27 05:14 [Application Error 1000] Faulting application name: ctfmon.exe, version: 10.0.26100.3037, time stamp: 0x5a5e47ae Faulting module name: MsCtfMonitor.DLL, version: 10.0.26100.3037, time stamp: 0x1724d214 Exc...
+2026-10-27 05:14 [Application Error 1000] Faulting application name: LogonUI.exe, version: 10.0.26100.1882, time stamp: 0x484c2661 Faulting module name: Windows.UI.Xaml.dll, version: 10.0.26100.3037, time stamp: 0x659a665a...
+2026-10-22 19:59 [Application Error 1000] Faulting application name: chrome.exe, version: 154.0.8037.93, time stamp: 0x6abad9e6 Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0x95e6c489 Exception co...</pre></details>
+</div>
+</div>
+<div class="card"><h2>К сведению / не проверено</h2><ul>
+<li>Сервер виртуальный: здоровье физических дисков и температуру контролирует хостер - это нормально.</li>
+<li>Не обновляются приложения Microsoft Store: 9XXXXXXXXXXX-Contoso.App, 9N0DX20HK701-Microsoft.WindowsTerminal - ошибка 0x80073D02 (0x80073D02 - приложение было запущено во время обновления; обновится, когда его закроют).</li>
+</ul></div>
+<div class="card"><h2>Технические подробности / Technical details</h2><p class="meta">В этом публичном примере сырые данные (списки процессов, открытые порты) удалены. В вашем отчёте они будут здесь. / Raw data (process lists, open ports) are removed from this public example; your report has them here.</p></div>
+<footer>server-diag 2.0 · только чтение - скрипт ничего не менял; проверка заняла 33 сек. · <a href="https://github.com/vadimpokrov396-ship-it/server-diag">github.com/vadimpokrov396-ship-it/server-diag</a></footer></main></body></html>

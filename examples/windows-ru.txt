@@ -1,0 +1,47 @@
+
+========================================================================
+ ДИАГНОСТИКА WINDOWS · WIN-SERVER01 · 28.10.2026 05:16
+ Microsoft Windows Server 2025 Standard (build 26100) · 8 лог. процессоров · 23 ГБ ОЗУ · виртуальный (OpenStack Foundation OpenStack Nova), работает 34 дн. 0 ч
+========================================================================
+
+ ИТОГ: ЕСТЬ СЕРЬЁЗНАЯ ПРОБЛЕМА
+
+ ● НОРМА     Диски                    норма - занято не больше 58% (самый заполненный: C:, свободно 31 ГБ); SMART не нужен (VPS)
+ ● ПРОБЛЕМА  Память (ОЗУ)             Windows не хватало памяти: 14 раз за 30 дн., из них за 7 дней - 14
+ ● НОРМА     Процессор и температура  норма - занят на 36% (замер 3 сек.), ядер: 8
+ ● НОРМА     Сбои и перезагрузки      норма - внезапных выключений и синих экранов за 30 дн. нет; работает без перезагрузки 34 дн. 0 ч
+ ● ВНИМАНИЕ  Службы и программы       Программы падали или зависали за 7 дней: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1
+ ● НОРМА     Сеть и время             норма - интернет и DNS работают, ping 5 ms, часы точные (±0 с)
+
+ ГЛАВНАЯ ПРИЧИНА  (уверенность: высокая)
+   ПРОБЛЕМА: Windows не хватало памяти: 14 раз за 30 дн., из них за 7 дней - 14
+   Когда память кончается, программы падают с ошибками, а Windows сильно тормозит. Больше всего памяти тогда занимали: chrome.exe, WindowsTerminal.exe.
+
+ ЧТО СДЕЛАТЬ
+   1) Посмотрите, кто ест память сейчас: WindowsTerminal 2,7 ГБ, chrome 2,3 ГБ (46 проц.), mspaint 1,6 ГБ (40 проц.), svchost 1,2 ГБ (78 проц.), cmd 409 МБ (24 проц.)
+   2) Ограничьте аппетит «прожорливой» программы (например, максимум памяти для SQL Server) или найдите утечку памяти (растёт ли потребление со временем)
+   3) Если нагрузка выросла законно - добавьте оперативной памяти (тариф выше) или увеличьте файл подкачки
+
+ ЕЩЁ ЗАМЕЧЕНО
+   ● Программы падали или зависали за 7 дней: chrome.exe x1, LogonUI.exe x1, ctfmon.exe x1
+      -> Обновите эти программы до свежих версий
+
+ К СВЕДЕНИЮ / НЕ ПРОВЕРЕНО
+   - Сервер виртуальный: здоровье физических дисков и температуру контролирует хостер - это нормально.
+   - Не обновляются приложения Microsoft Store: 9XXXXXXXXXXX-Contoso.App, 9N0DX20HK701-Microsoft.WindowsTerminal - ошибка 0x80073D02 (0x80073D02 - приложение было запущено во время обновления; обновится, когда его закроют).
+
+ ТЕХНИЧЕСКИЕ ПОДРОБНОСТИ (главное)
+   cpu: 36% busy (3 s), queue 0; top cpu: mspaint 11%, svchost 4%, MsMpEng 2%, powershell 1%
+   ram: available 8,9 ГБ / 23 ГБ (38%), commit 66%, page-ins 6/s; top ram: WindowsTerminal 2,7 ГБ, chrome 2,3 ГБ (46 проц.), mspaint 1,6 ГБ (40 проц.), svchost 1,2 ГБ (78 проц.), cmd 409 МБ (24 проц.)
+   disk: 0,3 ms per operation at 72 IOPS (3 s sample)
+   [Память (ОЗУ)] 2026-10-27 05:14 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+      2026-10-22 19:59 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+      2026-10-22 19:42 [Microsoft-Windows-Resource-Exhaustion-Detector 2004] Windows successfully diagnosed a low virtual memory condition. The following programs consumed the most virtual memory: WindowsTe...
+   [Службы и программы] 2026-10-27 05:14 [Application Error 1000] Faulting application name: ctfmon.exe, version: 10.0.26100.3037, time stamp: 0x5a5e47ae Faulting module name: MsCtfMonitor.DLL, version: 10.0.26100.3037, time...
+      2026-10-27 05:14 [Application Error 1000] Faulting application name: LogonUI.exe, version: 10.0.26100.1882, time stamp: 0x484c2661 Faulting module name: Windows.UI.Xaml.dll, version: 10.0.26100.3037, ...
+      2026-10-22 19:59 [Application Error 1000] Faulting application name: chrome.exe, version: 154.0.8037.93, time stamp: 0x6abad9e6 Faulting module name: ntdll.dll, version: 10.0.26100.3037, time stamp: 0...
+
+ Полный отчёт сохранён: C:\Users\Administrator\Desktop\server-diag-report-WIN-SERVER01-2026-10-28.html
+   Откройте его в браузере или отправьте специалисту.
+ Проверка заняла 33 сек. Скрипт ничего не менял в системе.
+
