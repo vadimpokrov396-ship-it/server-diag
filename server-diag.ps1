@@ -61,6 +61,7 @@ function Add-F([int]$Sev, [string]$Area, [int]$Score, [string]$Conf, [string]$Ti
     if ($Conf -eq 'l') { $Score -= 10 }
     $script:F.Add([pscustomobject]@{ Sev = $Sev; Area = $Area; Score = $Score; Conf = $Conf; Title = $Title; Why = $Why; Do = $Do; Ev = $Ev; N = $script:F.Count })
 }
+function Raz([int]$n) { $a = $n % 10; $b = $n % 100; if ($a -ge 2 -and $a -le 4 -and ($b -lt 12 -or $b -gt 14)) { "$n раза" } else { "$n раз" } }   # Russian plural
 function Note([string]$s) { $script:Notes.Add($s) }
 function Limit([string]$s) { $script:Limits.Add($s) }
 function Sec([string]$s) { [void]$script:Tech.AppendLine(''); [void]$script:Tech.AppendLine("=== $s") }
@@ -308,7 +309,7 @@ if ($lowMem.Count -gt 0) {
     $who = (@($lowMem | ForEach-Object { [regex]::Matches("$($_.Message)", '([\w\.\-]+\.exe)') | Select-Object -First 3 | ForEach-Object { $_.Groups[1].Value } }) | Group-Object | Sort-Object Count -Descending | Select-Object -First 4 | ForEach-Object { $_.Name }) -join ', '
     $recent = @($lowMem | Where-Object { $_.TimeCreated -ge $Since7 }).Count
     $sev = 1; $sc = 62; if ($recent -gt 0 -or $lowMem.Count -ge 3) { $sev = 2; $sc = 88 }
-    Add-F $sev 'mem' $sc 'h' (L "Windows не хватало памяти: $($lowMem.Count) раз за $Days дн., из них за 7 дней - $recent" "Windows ran low on memory: $($lowMem.Count) time(s) in $Days days, $recent in the last 7 days") `
+    Add-F $sev 'mem' $sc 'h' (L "Windows не хватало памяти: $(Raz $lowMem.Count) за $Days дн., из них за 7 дней - $recent" "Windows ran low on memory: $($lowMem.Count) time(s) in $Days days, $recent in the last 7 days") `
         (L "Когда память кончается, программы падают с ошибками, а Windows сильно тормозит. Больше всего памяти тогда занимали: $who." "When memory runs out, programs crash with errors and Windows slows down badly. The biggest consumers were: $who.") `
         (L "Посмотрите, кто ест память сейчас: $TopMemH
 Ограничьте аппетит «прожорливой» программы (например, максимум памяти для SQL Server) или найдите утечку памяти (растёт ли потребление со временем)
@@ -373,7 +374,7 @@ If the machine is yours - clean the dust, check the fans, replace thermal paste"
 if (-not $IsVM -and $null -eq $TempC) { Note (L 'Датчик температуры через Windows недоступен (обычное дело для серверов) - температура не проверена.' 'No temperature sensor is exposed to Windows (common on servers) - temperature was not checked.') }
 $thr = @(Get-Ev @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Processor-Power'; Id = 37; StartTime = $Since7 })
 if ($thr.Count -gt 0 -and -not $IsVM) {
-    Add-F 1 'cpu' 50 'm' (L "Прошивка ограничивала скорость процессора: $($thr.Count) раз за 7 дней" "Firmware limited the CPU speed $($thr.Count) time(s) in 7 days") `
+    Add-F 1 'cpu' 50 'm' (L "Прошивка ограничивала скорость процессора: $(Raz $thr.Count) за 7 дней" "Firmware limited the CPU speed $($thr.Count) time(s) in 7 days") `
         (L 'Процессор работал медленнее обычного по команде BIOS/прошивки - чаще всего из-за перегрева или настроек энергосбережения.' 'The CPU ran slower than normal on firmware request - usually overheating or power-saving settings.') `
         (L "Проверьте охлаждение (вентиляторы, пыль)
 В BIOS/схеме электропитания выберите режим «Высокая производительность»" "Check cooling (fans, dust)
@@ -465,7 +466,7 @@ if ($inc.Count -gt 0) {
     $inc7 = @($inc | Where-Object { $_ -ge $Since7 }).Count
     $sev = 1; $sc = 55; if ($inc7 -ge 1) { $sc = 66 }; if ($inc.Count -ge 2) { $sev = 2; $sc = 84 }
     $wl = (@($inc | Sort-Object -Descending | Select-Object -First 5 | ForEach-Object { Fmt-Date $_ })) -join ', '
-    Add-F $sev 'crash' $sc 'm' (L "Windows выключалась аварийно (без нормального завершения работы): $($inc.Count) раз за $Days дн. - $wl" "Windows shut down unexpectedly (no clean shutdown) $($inc.Count) time(s) in $Days days - $wl") `
+    Add-F $sev 'crash' $sc 'm' (L "Windows выключалась аварийно (без нормального завершения работы): $(Raz $inc.Count) за $Days дн. - $wl" "Windows shut down unexpectedly (no clean shutdown) $($inc.Count) time(s) in $Days days - $wl") `
         (L 'Компьютер выключился или перезагрузился без нормального завершения работы: пропало питание, хостер сделал принудительный reset, система зависла или случился синий экран. Время - момент загрузки после сбоя.' 'The machine powered off or restarted without a clean shutdown: power loss, a forced reset by the provider, a freeze or a blue screen. The time is the boot after the failure.') `
         (L "Спросите хостера, не было ли в это время работ, сбоя питания или перезагрузки по их инициативе
 Посмотрите другие пункты отчёта: синие экраны, WHEA, перегрев, ошибки дисков, нехватка памяти

@@ -363,7 +363,7 @@ Reduce the appetite: fewer PHP-FPM/Apache workers, a smaller database cache (inn
 If the load legitimately grew, add RAM (a bigger plan) or at least a 1–2 GB swap file")" "$(printf '%s\n' "$OOM7" | grep -a 'Killed process' | tail -n 5)"
   fi
 fi
-[ "${OOMD:-0}" -gt 0 ] && add 1 mem 55 h "$(L "systemd-oomd завершал программы из-за нехватки памяти: $OOMD раз за 7 дней" "systemd-oomd killed programs due to memory pressure: $OOMD time(s) in 7 days")" \
+[ "${OOMD:-0}" -gt 0 ] && add 1 mem 55 h "$(L "systemd-oomd завершал программы из-за нехватки памяти: $(raz "$OOMD") за 7 дней" "systemd-oomd killed programs due to memory pressure: $OOMD time(s) in 7 days")" \
   "$(L "Служба systemd-oomd заранее убивает программы, когда памяти становится мало." "systemd-oomd kills programs early when memory runs low.")" \
   "$(L "Посмотрите, что убивалось: journalctl -u systemd-oomd --since -7d
 Уменьшите потребление памяти или добавьте RAM" "See what was killed: journalctl -u systemd-oomd --since -7d
@@ -520,7 +520,7 @@ Reduce the load for now to avoid an emergency shutdown")" "$(printf '%s\n' "$THO
   fi
   THR=$(kgrep 7 'temperature above threshold|cpu clock throttled|Package temperature above')
   if [ -n "$THR" ] && ! printf '%s' "${F_T[*]:-}" | grep -qE 'Перегрев|Overheating'; then
-    add 1 cpu 52 h "$(L "Процессор перегревался и сбрасывал частоту: $(lc "$THR") раз за 7 дней" "The CPU overheated and throttled $(lc "$THR") time(s) in 7 days")" \
+    add 1 cpu 52 h "$(L "Процессор перегревался и сбрасывал частоту: $(raz "$(lc "$THR")") за 7 дней" "The CPU overheated and throttled $(lc "$THR") time(s) in 7 days")" \
       "$(L "Сейчас температура в норме, но под нагрузкой процессор греется до предела и замедляется." "The temperature is fine right now, but under load the CPU hits its limit and slows down.")" \
       "$(L "Попросите хостера проверить охлаждение (вентиляторы, пыль, термопасту)
 Посмотрите, в какое время это происходит: sudo journalctl -k | grep -i throttl" "Ask your provider to check cooling (fans, dust, thermal paste)
@@ -588,7 +588,7 @@ If panics repeat — test RAM (memtest86+) and ask the provider to check the har
 fi
 if [ "$UNC" -gt 0 ]; then
   sev=1 sc=55; [ "$UNC7" -ge 1 ] && sc=66; [ "$UNC" -ge 2 ] && { sev=2; sc=84; }
-  add "$sev" crash "$sc" m "$(L "Сервер выключался аварийно (без нормального завершения работы): $UNC раз за 30 дней — $UNCL" "The server went down uncleanly (no normal shutdown) $UNC time(s) in 30 days — $UNCL")" \
+  add "$sev" crash "$sc" m "$(L "Сервер выключался аварийно (без нормального завершения работы): $(raz "$UNC") за 30 дней — $UNCL" "The server went down uncleanly (no normal shutdown) $UNC time(s) in 30 days — $UNCL")" \
     "$(L "Журнал оборвался без записи о выключении. Так бывает при пропадании питания, принудительной перезагрузке у хостера, полном зависании системы или аппаратном сбое. Время указано по последней записи в журнале перед сбоем." \
          "The log stopped without a shutdown record. This happens on power loss, a forced reset by the provider, a complete system freeze or a hardware fault. The time is the last journal entry before the crash.")" \
     "$(L "Спросите хостера, не было ли в это время работ, сбоя питания или перезагрузки по их инициативе
@@ -598,7 +598,7 @@ if [ "$UNC" -gt 0 ]; then
 Look at other items in this report: overheating, memory/disk errors, out-of-memory — common causes of freezes
 See what happened before the crash: sudo journalctl -b -1 -n 100")" "unclean boots (by last journal entry): $UNCL"
 fi
-[ "$B7" -ge 4 ] && add 1 crash 50 h "$(L "Сервер часто перезагружается: $B7 раз за 7 дней" "The server reboots often: $B7 times in 7 days")" \
+[ "$B7" -ge 4 ] && add 1 crash 50 h "$(L "Сервер часто перезагружается: $(raz "$B7") за 7 дней" "The server reboots often: $B7 times in 7 days")" \
   "$(L "Частые перезагрузки — признак нестабильности или чьих-то регулярных ручных перезапусков." "Frequent reboots indicate instability or someone restarting it regularly.")" \
   "$(L "Выясните, кто и зачем перезагружает (last -x, панель хостера)
 Если перезагрузки сами собой — смотрите пункты про сбои, память и перегрев" "Find out who reboots it and why (last -x, provider panel)
@@ -619,7 +619,7 @@ if [ -n "$LOCK" ]; then
 Если физический — обновите BIOS, микрокод и ядро; проверьте охлаждение" "If the server is virtual — tell your provider: “soft lockup / RCU stall, please check the node load”
 If physical — update BIOS, microcode and kernel; check cooling")" "$(printf '%s\n' "$LOCK" | tail -n 5)"
 fi
-[ -n "$HUNG" ] && add 1 crash 55 h "$(L "Программы зависали больше чем на 2 минуты, ожидая диск или сеть: $(lc "$HUNG") раз за 30 дней" "Programs hung for over 2 minutes waiting for disk or network: $(lc "$HUNG") time(s) in 30 days")" \
+[ -n "$HUNG" ] && add 1 crash 55 h "$(L "Программы зависали больше чем на 2 минуты, ожидая диск или сеть: $(raz "$(lc "$HUNG")") за 30 дней" "Programs hung for over 2 minutes waiting for disk or network: $(lc "$HUNG") time(s) in 30 days")" \
   "$(L "Процессы надолго застревали на операциях ввода-вывода. Обычно это медленный или сбоящий диск, перегруженное хранилище или зависший сетевой диск (NFS)." "Processes were stuck on I/O for a long time. Usually a slow or failing disk, overloaded storage or a hung network share (NFS).")" \
   "$(L "Проверьте пункты про диски в этом отчёте (ошибки, SMART, нагрузка)
 Если используете NFS/сетевые диски — проверьте их доступность
@@ -923,6 +923,7 @@ add() { F_SEV[FN]=$1; F_AREA[FN]=$2; F_SC[FN]=$3; F_CONF[FN]=$4; F_T[FN]=$5; F_W
 note() { NOTES+=("$*"); }
 limit() { LIMITS+=("$*"); }
 lc() { printf '%s\n' "$1" | grep -c .; }
+raz() { local a=$(( $1 % 10 )) b=$(( $1 % 100 )); if [ "$a" -ge 2 ] && [ "$a" -le 4 ] && { [ "$b" -lt 12 ] || [ "$b" -gt 14 ]; }; then printf '%s раза' "$1"; else printf '%s раз' "$1"; fi; }   # Russian plural
 fgt() { [ -n "$1" ] && awk -v a="$1" -v b="$2" 'BEGIN{exit !(a+0 > b+0)}'; }
 human() { awk -v k="${1:-0}" -v u="$(L 'КБ МБ ГБ ТБ ПБ' 'KB MB GB TB PB')" 'BEGIN{n=split(u,a," "); i=1; while (k>=1024 && i<n) {k/=1024; i++} printf (k<10 ? "%.1f %s" : "%.0f %s"), k, a[i]}'; }
 dur() { local s=$1 d h m; d=$((s/86400)); h=$((s%86400/3600)); m=$((s%3600/60))
