@@ -22,6 +22,7 @@ RULES = {
     ('stornvme', 129): ('warn', 'сброс NVMe-контроллера'),
     ('Ntfs', 55): ('bad', 'повреждение файловой системы NTFS'),
     ('Ntfs', 98): ('bad', 'том NTFS требует проверки (chkdsk)'),
+    ('volmgr', 46): ('warn', 'Windows не может записать дамп падения (не настроен файл подкачки/дамп) — причину синих экранов не узнать'),
     ('Ntfs', 137): ('warn', 'ошибка журнала транзакций NTFS'),
     ('WHEA-Logger', 1): ('bad', 'аппаратная ошибка (WHEA)'),
     ('WHEA-Logger', 17): ('warn', 'исправленная аппаратная ошибка PCIe (WHEA)'),
@@ -59,6 +60,9 @@ def scan(path):
                 eid = int(m.group(1)); prov = p.group(1)
                 for (ps, rid), (sev, txt) in RULES.items():
                     if rid == eid and ps.lower() in prov.lower():
+                        if (ps, rid) == ('Ntfs', 98):   # 28/10: Win11/2025 log «volume is healthy» as 98 with Level 4 -> only warnings/errors count
+                            lv = re.search(r'<Level>(\d)</Level>', x)
+                            if lv and lv.group(1) == '4': break
                         t = rx_time.search(x); ts = t.group(1)[:19].replace('T', ' ') if t else '?'
                         try:
                             if datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S') < SINCE: break
