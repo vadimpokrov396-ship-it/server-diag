@@ -325,10 +325,10 @@ say "$(L "• память: свободная, swap, OOM, ошибки ECC" "�
 sec "Memory"
 run "free -h"
 run "cat /proc/pressure/memory /proc/pressure/io /proc/pressure/cpu 2>/dev/null"
-read -r MT MA ST SF < <(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}/^SwapTotal:/{st=$2}/^SwapFree:/{sf=$2}END{print t+0,a+0,st+0,sf+0}' /proc/meminfo)
+read -r MT MA ST SF < <(awk '/^MemTotal:/{t=$2}/^MemAvailable:/{a=$2}/^SwapTotal:/{st=$2}/^SwapFree:/{sf=$2}END{printf "%.0f %.0f %.0f %.0f\n", t, a, st, sf}' /proc/meminfo)
 [ "$MT" -gt 0 ] || MT=1
 AP=$((MA*100/MT))
-TOPMEM=$(ps -eo rss=,comm= 2>/dev/null | awk '{a[$2]+=$1; n[$2]++} END{for(k in a) print a[k], n[k], k}' | sort -rn | head -5)
+TOPMEM=$(ps -eo rss=,comm= 2>/dev/null | awk '{a[$2]+=$1; n[$2]++} END{for(k in a) printf "%.0f %d %s\n", a[k], n[k], k}' | sort -rn | head -5)
 TOPMEM_H=$(printf '%s\n' "$TOPMEM" | while read -r kb n c; do [ -n "$c" ] && printf '%s %s%s, ' "$c" "$(human "$kb")" "$([ "$n" -gt 1 ] && L " ($n проц.)" " ($n procs)")"; done | sed 's/, $//')
 run "ps -eo rss=,comm= | awk '{a[\$2]+=\$1; n[\$2]++} END{for(k in a) printf \"%8.0f MB %4d  %s\n\", a[k]/1024, n[k], k}' | sort -rn | head -12"
 
@@ -929,10 +929,10 @@ dur() { local s=$1 d h m; d=$((s/86400)); h=$((s%86400/3600)); m=$((s%3600/60))
         if [ "$d" -gt 0 ]; then L "$d дн. $h ч" "${d}d ${h}h"; elif [ "$h" -gt 0 ]; then L "$h ч $m мин" "${h}h ${m}m"; else L "$m мин" "${m} min"; fi; }
 fdate() { if [ "$LNG" = en ]; then date -d "@$1" '+%Y-%m-%d %H:%M'; else date -d "@$1" '+%d.%m.%Y %H:%M'; fi; }
 psi() { [ -r "/proc/pressure/$1" ] && awk -v k="$2" -v f="$3" '$1==k{for(i=2;i<=NF;i++){split($i,a,"="); if(a[1]==f) print a[2]}}' "/proc/pressure/$1"; }
-cpu_snap() { awk '/^cpu /{print $2+$3+$4+$7+$8, $5, $6, $9+0, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat; }
-swp_snap() { awk '/^pswpin /{i=$2} /^pswpout /{o=$2} END{print i+0, o+0}' /proc/vmstat; }
+cpu_snap() { awk '/^cpu /{printf "%.0f %.0f %.0f %.0f %.0f\n", $2+$3+$4+$7+$8, $5, $6, $9+0, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat; }   # printf: old mawk prints big ints as 3.8e+09
+swp_snap() { awk '/^pswpin /{i=$2} /^pswpout /{o=$2} END{printf "%.0f %.0f\n", i, o}' /proc/vmstat; }
 dproc() { ps -eo pid=,stat= 2>/dev/null | awk '$2 ~ /^D/{print $1}' | sort; }
-proc_snap() { awk '{i=index($0,"("); j=match($0,/\) [A-Za-z] /); if(!i||!j) next; c=substr($0,i+1,j-i-1); split(substr($0,j+2),a," "); print $1"\t"(a[12]+a[13])"\t"c}' /proc/[0-9]*/stat 2>/dev/null; }
+proc_snap() { awk '{i=index($0,"("); j=match($0,/\) [A-Za-z] /); if(!i||!j) next; c=substr($0,i+1,j-i-1); split(substr($0,j+2),a," "); printf "%s\t%.0f\t%s\n", $1, a[12]+a[13], c}' /proc/[0-9]*/stat 2>/dev/null; }
 tcp_ok() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; }
 kgrep() { # kgrep DAYS(1|7|30) REGEX [EXCLUDE-REGEX] -> matching kernel log lines within DAYS
   local c=0; [ "$1" = 1 ] && c=$CUT1; [ "$1" = 7 ] && c=$CUT7
@@ -977,7 +977,8 @@ smart_check() { # $1 device, $2 smartctl -d type (may be empty) -> adds findings
   gd=$(sm_kv 'Elements in grown defect list:')
   temp=$(sm_kv 'Temperature:'); [ -n "$temp" ] || temp=$(sm_attr Temperature_Celsius); [ -n "$temp" ] || temp=$(sm_attr Airflow_Temperature_Cel); [ -n "$temp" ] || temp=$(sm_kv 'Current Drive Temperature:')
   wt=$(sm_kv 'Warning  Comp. Temp. Threshold:'); ct=$(sm_kv 'Critical Comp. Temp. Threshold:')
-  p() { pr="$pr$(L "$1" "$2"); "; }
+  local np=0
+  p() { pr="$pr$(L "$1" "$2"); "; np=$((np+1)); }
   if printf '%s' "$SM" | grep -qiE 'self-assessment test result: *FAILED|SMART Health Status: *(FAIL|IMPENDING|DATA CHANNEL)' || [ $((rc & 8)) -ne 0 ]; then sev=2 sc=98; p "SMART: диск сам сообщает о неисправности (FAILED)" "SMART: the disk reports itself as FAILING"; fi
   printf '%s' "$SM" | grep -qiE 'Critical Warning: +0x0*[1-9a-f]' && { sev=2; sc=98; p "NVMe: критическое предупреждение" "NVMe critical warning"; }
   [ "${pend:-0}" -gt 0 ] && { sev=2; sc=98; p "нечитаемых секторов: $pend" "$pend unreadable (pending) sectors"; }
@@ -1013,6 +1014,16 @@ smart_check() { # $1 device, $2 smartctl -d type (may be empty) -> adds findings
            "Back up important data to another disk/server immediately
 Ask your provider / data center to replace the disk: “SMART errors on $d (${model:-disk}), please replace” and attach this report
 If the disk is in a RAID, wait for the rebuild to finish after the replacement")" "$pe"
+  elif [ "$np" = 1 ] && [ "${crc:-0}" -gt 10 ]; then
+    add 1 disk 42 m "$(L "Диск $d${model:+ ($model)}: ошибки передачи данных по кабелю — $crc (кабель или разъём)" "Disk $d${model:+ ($model)}: $crc data transfer (CRC) errors — cable or connector")" \
+      "$(L "Это не износ диска: данные портились по дороге между диском и контроллером, и их приходилось передавать повторно (в эти моменты диск «подтормаживает»). Счётчик накопительный — за всё время работы диска." \
+           "This is not disk wear: data got corrupted between the disk and the controller and had to be resent (the disk stalls at those moments). The counter is cumulative over the disk's life.")" \
+      "$(L "Запустите проверку ещё раз через несколько дней: если число растёт — проблема активна
+Попросите дата-центр заменить SATA-кабель или переставить диск в другой порт/слот корзины
+Если после замены кабеля счётчик всё равно растёт — виноват контроллер или сам диск" \
+           "Run the check again in a few days: if the number grows, the problem is active
+Ask the data center to replace the SATA cable or move the disk to another port/bay
+If it still grows after the cable swap, the controller or the disk itself is at fault")" "$pe"
   else
     add 1 disk "$sc" h "$(L "Диск $d ${model:+($model) }начинает изнашиваться: $pr" "Disk $d ${model:+($model) }shows early wear: $pr")" \
       "$(L "Диск работает, но есть первые признаки износа или проблем. Если значения растут — диск скоро откажет." \
