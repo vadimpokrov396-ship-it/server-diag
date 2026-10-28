@@ -40,6 +40,8 @@ RULES = {
     ('Application Hang', 1002): ('info', 'программа зависла'),
     ('Kernel-General', 12): ('info', 'загрузка системы'),
     ('User32', 1074): ('info', 'штатная перезагрузка/выключение (кто и почему)'),
+    ('WLMS', 100): ('bad', 'истёк срок лицензии/ознакомительной версии Windows — служба WLMS выключает сервер каждый час'),
+    ('EventLog', 6006): ('info', 'журнал событий остановлен (выключение)'),
 }
 rx_prov = re.compile(r'<Provider Name="([^"]+)"'); rx_id = re.compile(r'<EventID[^>]*>(\d+)</EventID>')
 rx_time = re.compile(r'<TimeCreated SystemTime="([^"]+)"'); rx_data = re.compile(r'<Data(?: Name="([^"]*)")?>([^<]*)</Data>')
@@ -78,6 +80,27 @@ items = sorted(allh.items(), key=lambda kv: (order[kv[0][0]], -len(kv[1])))
 for (sev, prov, eid, txt), ev in items:
     if sev != 'info':
         print('!! %s %s: %d раз за %d дн. (последний %s) [%s/%d]' % ('🔴' if sev == 'bad' else '🟡', txt, len(ev), DAYS, max(e[0] for e in ev), prov, eid))
+# ---- pattern analysis (28/10): who shuts the server down, and does it happen on a schedule?
+def _dt(ts):
+    try: return datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+    except ValueError: return None
+inits = collections.Counter()
+for (sev, prov, eid, txt), ev in allh.items():
+    if eid == 1074 and 'user32' in prov.lower():
+        for _, d in ev: inits[re.split(r'\s*\|\s*', d)[0].split('=')[-1].strip()[:90]] += 1
+if inits:
+    top, n = inits.most_common(1)[0]
+    print('!! %s кто выключал/перезагружал сервер чаще всего: %s (%d раз)' % ('🔴' if n >= 3 else '🟡', top, n))
+    if 'wlms' in ' '.join(inits).lower():
+        print('!! 🔴 ГЛАВНАЯ ПРИЧИНА, вероятно: сервер выключает служба лицензий WLMS (wlms.exe) — Windows не активирована или закончилась ознакомительная (Evaluation) версия. Нужна активация/лицензия.')
+stops = sorted({t for (sev, prov, eid, txt), ev in allh.items() if (eid in (41, 6008, 1074, 6006)) for t in (_dt(e[0]) for e in ev) if t})
+if len(stops) >= 4:
+    gaps = [(b - a).total_seconds() / 60 for a, b in zip(stops, stops[1:]) if (b - a).total_seconds() > 300]
+    if len(gaps) >= 3:
+        gs = sorted(gaps); med = gs[len(gs) // 2]
+        near = sum(1 for g in gaps if abs(g - med) <= max(10, med * 0.15))
+        if near >= max(3, len(gaps) * 0.6):
+            print('!! 🔴 выключения идут ПО РАСПИСАНИЮ: примерно каждые %d мин (%d из %d интервалов). Ищи причину-«таймер»: лицензия (WLMS), задача в Планировщике, политика/скрипт, ИБП/BIOS, хостер.' % (round(med), near, len(gaps)))
 print('\n---- details (last 8 of each)')
 for (sev, prov, eid, txt), ev in items:
     print('\n[%s] %s / %d — %s — %d' % (sev, prov, eid, txt, len(ev)))
