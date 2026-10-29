@@ -91,6 +91,7 @@ if [ -n "$ROOT" ]; then
   J=""; if [ -d "$LOGD/journal" ] && has journalctl && [ -n "$(ls -A "$LOGD/journal" 2>/dev/null)" ]; then J="journalctl -D $LOGD/journal --no-pager -q"; fi
   if [ -n "$J" ]; then
     timeout 120 $J -k --since "-$DAYS days" -o short-iso 2>>"$SEC" | tail -n 300000 > "$KL"
+    grep -q 'is truncated, ignoring file' "$SEC" && note "текущий файл журнала оборван жёсткой перезагрузкой (это нормально после Force restart) — последние секунды перед ней могли не сохраниться"
     [ -s "$KL" ] || echo "journalctl не прочитал журнал (возможно, журнал новее версии systemd в rescue) — беру kern.log/syslog" >> "$SEC"
     run "$J --list-boots 2>/dev/null | tail -n 12"
   fi
@@ -103,7 +104,7 @@ if [ -n "$ROOT" ]; then
   chk bad  "ошибки чтения/записи диска (I/O)" 'I/O error|critical medium error|Medium Error|Unrecovered read error|failed command: (READ|WRITE)|Sense Key *: *(Medium|Hardware) Error' 'loop[0-9]|sr0|fd0'
   chk warn "сбросы связи с диском (кабель/контроллер/NVMe)" 'ata[0-9.]+: (exception Emask|hard resetting link|SError|failed to IDENTIFY)|nvme[0-9]+: (I/O [0-9]+ QID [0-9]+ timeout|controller is down|resetting controller|Removing after probe failure)'
   chk bad  "ошибки файловой системы" 'EXT4-fs error|EXT4-fs \(.*\): .*(corrupt|checksum)|XFS \(.*\): (Corruption|metadata I/O error|Internal error)|BTRFS (error|critical)|Remounting filesystem read-only|Aborting journal on device'
-  chk bad  "аппаратные ошибки процессора/памяти (MCE)" 'mce: \[Hardware Error\]|Machine check events logged|Machine Check Exception|\[Hardware Error\]:|EDAC .*(CE|UE) ' 'mce: CPU[0-9]* supports|MCE banks|mce: Using'
+  chk bad  "аппаратные ошибки процессора/памяти (MCE)" 'mce: \[Hardware Error\]|Machine check events logged|Machine Check Exception|\[Hardware Error\]:|EDAC MC[0-9]+: [0-9]+ (CE|UE) |EDAC .*(Corrected|Uncorrected) error' 'mce: CPU[0-9]* supports|MCE banks|mce: Using|Giving out device|ECC enabled|ECC disabled|Ver: '
   chk warn "нехватка памяти — ядро убивало процессы (OOM)" 'Out of memory: Kill|oom-kill:.*task=|Killed process [0-9]+'
   chk bad  "падения ядра (kernel BUG/Oops/panic)" 'kernel BUG at|BUG: (unable to handle|kernel NULL pointer|Bad page)|general protection fault|Oops: |Kernel panic'
   chk warn "зависания ядра (soft lockup, RCU stall, hung task)" 'soft lockup|hard LOCKUP|rcu_(sched|preempt|bh) (self-)?detected stall|rcu: INFO: .*stall|blocked for more than [0-9]+ seconds'
@@ -122,12 +123,17 @@ if [ -n "$ROOT" ]; then
   elif [ ! -d "$ROOT/var/log/journal" ]; then note "постоянного журнала systemd нет (/var/log/journal) — проверены только kern.log/syslog"; fi
   if [ -n "$J" ]; then
     # аварийные выключения: загрузка, в конце которой нет штатного завершения. Последняя загрузка оборвана нашей перезагрузкой в rescue — не считаем.
-    BOOTS=$($J --list-boots 2>/dev/null | awk '$1 ~ /^-?[0-9]+$/{print $1}' | tail -n 15); last=$(echo "$BOOTS" | tail -1); unc=0; ul=""
+    BOOTS=$($J --list-boots 2>/dev/null | awk '$1 ~ /^-?[0-9]+$/{print $1}' | tail -n 15); last=$(echo "$BOOTS" | tail -1); unc=0; ul=""; rec=0; rl=""
     for b in $BOOTS; do [ "$b" = "$last" ] && continue
       t=$($J -b "$b" -n 40 -o short-iso 2>/dev/null)
-      echo "$t" | grep -qiE 'systemd-shutdown|Reached target .*(Power-Off|Reboot|Shutdown|Halt)|reboot: (Restarting|Power down)|Journal stopped|System is (rebooting|powering down)' || { unc=$((unc+1)); ul="$ul $(echo "$t" | tail -1 | cut -c1-16)"; }
+      if ! echo "$t" | grep -qiE 'systemd-shutdown|Reached target .*(Power-Off|Reboot|Shutdown|Halt)|reboot: (Restarting|Power down)|Journal stopped|System is (rebooting|powering down)'; then
+        end=$(echo "$t" | tail -1 | cut -c1-19); ets=$(date -d "$end" +%s 2>/dev/null || echo 0)
+        # обрывы за последние 6 часов — почти всегда наши же Force restart при включении rescue/диагностике
+        if [ "$ets" -gt "$(date -d '-6 hours' +%s)" ]; then rec=$((rec+1)); rl="$rl ${end:0:16}"; else unc=$((unc+1)); ul="$ul ${end:0:16}"; fi
+      fi
     done
     [ $unc -gt 0 ] && warn "сервер выключался аварийно (без штатного завершения): $unc раз —$ul"
+    [ ${rec:-0} -gt 0 ] && note "ещё $rec обрыв(а) загрузки за последние 6 часов —$rl (скорее всего, принудительные перезагрузки при включении rescue/диагностике)"
     if [ -n "$last" ]; then
       sec "Last 60 lines before the restart into rescue (the last boot was interrupted by that restart)"
       run "$J -b $last -n 60 -o short-iso"
