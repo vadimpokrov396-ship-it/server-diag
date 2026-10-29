@@ -143,13 +143,19 @@ sudo bash server-diag-linux.sh
 
 ## Если сервер не загружается (rescue-режим)
 
-Эти скрипты в этой версии не менялись:
-
 - [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) — для Windows-сервера, загруженного в Linux rescue (Hetzner, OVH или любой live-Linux). Разделы Windows подключаются только на чтение. Скрипт смотрит SMART, флаг «dirty» NTFS, минидампы, незавершённые обновления и журналы событий за 30 дней (3–10 минут):
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main/diag_windows_rescue.sh | sudo bash
   ```
+
+- [`diag_linux_rescue.sh`](diag_linux_rescue.sh) — для Linux-сервера, загруженного в rescue. Обычные `server-diag.sh` и `diag_linux.sh` в rescue проверили бы саму rescue-систему, а этот скрипт смотрит **установленную** систему: подключает её разделы только на чтение (ext4 — `noload`, xfs — `norecovery`, RAID собирается в режиме только чтения). Проверяет SMART и NVMe (битые сектора, ошибки целостности, износ, температура, журнал ошибок диска), RAID, счётчики ECC, заполненность разделов и inode, флаг ошибок ext4, а по журналу ядра установленной системы за 30 дней — ошибки чтения/записи и файловой системы, сбросы дисков, MCE, нехватку памяти (OOM), падения и зависания ядра, segfault, отчёты kdump/pstore, аварийные выключения, упавшие службы за 7 дней и последние 60 строк перед перезагрузкой в rescue (3–5 минут):
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main/diag_linux_rescue.sh -o diag_linux_rescue.sh && bash diag_linux_rescue.sh
+  ```
+
+  Последняя загрузка установленной системы всегда выглядит «оборванной» — её прервала перезагрузка в rescue, поэтому в счёт аварийных выключений она не идёт.
 
 - [`diag_linux.sh`](diag_linux.sh) — прежняя версия Linux-проверки (v1) без вердикта, оставлена для совместимости.
 
@@ -213,6 +219,6 @@ The script only reads `/proc`, `/sys`, logs and the output of read-only commands
 - **"Windows protected your PC"?** Click "More info" → "Run anyway". The files are plain text, so you can read them first.
 - **Where is the report?** On Linux it is in the folder you ran the command from; the path is printed at the end. On Windows it is on the Desktop. It is a single self-contained HTML file.
 - **Everything is green but the server is slow?** Run the check while it is slow: CPU, memory and disk load are measured live.
-- **The server does not boot?** Use rescue mode with [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) (Windows disk read-only from a Linux rescue system). [`diag_linux.sh`](diag_linux.sh) is the old v1 Linux check.
+- **The server does not boot?** Use rescue mode with [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) (Windows disk read-only from a Linux rescue system) or [`diag_linux_rescue.sh`](diag_linux_rescue.sh) for a Linux server: it mounts the installed system read-only and checks SMART/NVMe, RAID, ECC, free space and inodes, and the installed system's kernel log for 30 days (I/O and filesystem errors, disk resets, MCE, OOM kills, kernel crashes and hangs, segfaults, kdump/pstore, unclean shutdowns, failed services). [`diag_linux.sh`](diag_linux.sh) is the old v1 Linux check.
 
 Real sample reports with masked names: [`examples/`](examples/).
