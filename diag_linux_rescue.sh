@@ -160,6 +160,11 @@ if [ -n "$ROOT" ]; then
   fi
 fi
 
+# Полные SMART-логи каждого диска (smartctl -x) — для поля «Entire SMART log» в заявке дата-центру
+sec "SMART full logs (smartctl -x)"
+if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  { echo "===SMART-FULL /dev/$d==="; timeout 90 smartctl -x /dev/$d 2>&1 | head -n 400; echo "===SMART-END==="; } >> "$SEC"; done; fi
+
 { echo "ДИАГНОСТИКА LINUX (из rescue) $(hostname) — $(date '+%F %T %Z')"
   echo
   if [ ${#ISSUES[@]} -eq 0 ]; then echo "✅ Проблем не найдено."; else echo "Найдено: ${#ISSUES[@]}"; printf '%s\n' "${ISSUES[@]}"; fi
