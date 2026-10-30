@@ -8,7 +8,7 @@
 LC_ALL=C
 DIR="$(dirname "$(readlink -f "$0")")"; DAYS=${DAYS:-30}
 OUT="$DIR/diag_windows_$(hostname -s)_$(date +%Y%m%d_%H%M).txt"
-ISSUES=(); bad(){ ISSUES+=("🔴 $*"); }; warn(){ ISSUES+=("🟡 $*"); }
+ISSUES=(); bad(){ ISSUES+=("🔴 $*"); }; warn(){ ISSUES+=("🟡 $*"); }; note(){ ISSUES+=("ℹ️ $*"); }
 SEC=$(mktemp); MNT=$(mktemp -d /tmp/winro.XXXX); trap 'for m in "$MNT"/*; do mountpoint -q "$m" && umount "$m"; done; rm -rf "$SEC" "$MNT"' EXIT
 sec(){ printf '\n==================== %s\n' "$*" >> "$SEC"; }
 run(){ { echo "\$ $*"; timeout 120 bash -c "$*" 2>&1 | head -n 200; } >> "$SEC"; }
@@ -34,6 +34,25 @@ if has smartctl; then
     pu=$(echo "$a" | awk -F: '/Percentage Used/{gsub(/[ %]/,"",$2);print $2}'); [ -n "$pu" ] && [ "$pu" -ge 80 ] 2>/dev/null && warn "NVMe /dev/$d: износ ${pu}%"
   done
 else warn "smartctl недоступен — здоровье дисков не проверено"; fi
+
+# Пропавшие диски: NVMe-контроллер есть на шине PCI, но диска нет (отвалился/отключён ядром после таймаута)
+sec "Disk controllers (PCI) and NVMe state"
+run "lspci -nn 2>/dev/null | grep -iE 'non-volatile|nvme|sata|raid|sas|scsi'"
+for c in /sys/class/nvme/nvme*; do [ -e "$c" ] || continue; n=$(basename "$c")
+  mdl=$(cat "$c/model" 2>/dev/null | xargs); sn=$(cat "$c/serial" 2>/dev/null | xargs); st=$(cat "$c/state" 2>/dev/null); addr=$(cat "$c/address" 2>/dev/null)
+  echo "$n: state=${st:-?} model=$mdl serial=$sn pci=$addr namespaces=$(ls -d "$c"/${n}n* 2>/dev/null | xargs -n1 basename 2>/dev/null | xargs)" >> "$SEC"
+  if [ "$st" != "live" ] || ! ls -d "$c"/${n}n* >/dev/null 2>&1; then bad "NVMe $n${mdl:+ ($mdl${sn:+, SN $sn})}${addr:+, PCI $addr}: не работает (состояние ${st:-неизвестно}) — диск не виден системе"; fi
+done
+np=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ); nc=$(ls -d /sys/class/nvme/nvme* 2>/dev/null | grep -c .); nd=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .)
+echo "NVMe: контроллеров на PCI $np, видит ядро $nc, дисков $nd" >> "$SEC"
+[ "$np" -gt "$nd" ] && bad "на шине PCI NVMe-контроллеров: $np, а дисков NVMe в системе: $nd — один диск пропал (не отвечает или отключён ядром)"
+DN=$(dmesg 2>/dev/null | grep -aiE 'nvme[0-9]+: .*(disable controller|controller is down|Removing after probe failure|Device not ready|failed to set APST|Identify .* failed|frozen state)|ata[0-9.]+: (failed to IDENTIFY|link is slow|COMRESET failed)' | tail -n 10)
+[ -n "$DN" ] && { echo "$DN" >> "$SEC"; for k in $(echo "$DN" | grep -oE 'nvme[0-9]+' | sort -u); do bad "контроллер $k отключён ядром после ошибки: $(echo "$DN" | grep "$k" | tail -1 | sed -E 's/^\[[^]]*\] *//' | cut -c1-120)"; done; }
+run "dmesg 2>/dev/null | grep -aiE 'nvme|ata[0-9]+[.:]' | head -n 40"
+# диски без разделов
+for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  [ "$(lsblk -no NAME "/dev/$d" | wc -l)" -le 1 ] && [ -z "$(lsblk -dno FSTYPE "/dev/$d")" ] && note "диск /dev/$d без разделов (пустой, или система была на другом диске, или таблица разделов повреждена)"
+done
 [ -r /proc/mdstat ] && grep -q '^md' /proc/mdstat && { run "cat /proc/mdstat"; grep -qE '\[[U_]*_[U_]*\]' /proc/mdstat && bad "программный RAID деградировал"; }
 has mdadm && run "mdadm --examine --scan 2>/dev/null"
 grep -qiE 'ddf|isw|imsm' <(lsblk -o FSTYPE 2>/dev/null) && warn "есть диски в аппаратном/Intel RAID — Windows-тома могут быть видны только через dmraid/mdadm"
