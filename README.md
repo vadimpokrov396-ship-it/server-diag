@@ -163,6 +163,8 @@ sudo bash server-diag-linux.sh
   MIN=20 STOP=100 bash diag_stress.sh
   ```
 
+- **Сводка для программ.** Оба rescue-скрипта сразу после списка 🔴/🟡 печатают блок `===PVSUMMARY===` … `===PVSUMMARY-END===`: строка `os=… cpu=… threads=… ram_gb=…`, счётчики NVMe (`nvme_pci` — контроллеров на шине, `nvme_disks` — видимых дисков) и по строке `DISK …` на каждый диск: модель, серийный номер, health, realloc/pending/uncorr, CRC, ошибки целостности NVMe, износ, critical warning, температура, часы работы, unsafe shutdowns, журнал ошибок; `-` — показателя нет у этого типа диска. `diag_stress.sh` пишет строку `STRESS-SUMMARY idle=… peak=… peak_at=… cool=… dur=… reason=overheat|time stop=… mce_new=…`. По ним программа выносит вердикт без разбора текста (так делает расширение Expiry Monitor).
+
 - [`diag_linux.sh`](diag_linux.sh) — прежняя версия Linux-проверки (v1) без вердикта, оставлена для совместимости.
 
 ---

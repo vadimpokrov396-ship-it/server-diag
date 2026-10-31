@@ -54,6 +54,7 @@ else ISSUES+=("✅ $((EL/60)) мин под полной нагрузкой бе
 { echo "ТЕСТ ПОД НАГРУЗКОЙ (из rescue) $(hostname) — $(date '+%F %T %Z')"
   echo; printf '%s\n' "${ISSUES[@]}"; echo
   echo "CPU: $CPU · потоков: $CORES · RAM: ${RAM} ГБ · нагрузка: $TOOL"
+  echo "STRESS-SUMMARY idle=${IDLE} peak=${PEAK} peak_at=${PEAKAT} cool=${COOL} dur=${EL} reason=${REASON} stop=${STOP} mce_new=$((E1 - E0)) cpu=\"${CPU}\""
   echo "Без нагрузки: ${IDLE} °C · пик: ${PEAK} °C на +$((PEAKAT/60))м$((PEAKAT%60))с · через 30 с после нагрузки: ${COOL} °C · длительность: $((EL/60))м$((EL%60))с · остановлен: $([ "$REASON" = overheat ] && echo "по перегреву (порог ${STOP} °C)" || echo "по времени")"
   echo; echo "Замеры:"; printf '%s' "$SAMPLES"
   [ "$E1" -gt "$E0" ] && { echo; echo "Аппаратные ошибки в dmesg:"; dmesg | grep -aiE 'mce: \[Hardware Error\]|Machine check|\[Hardware Error\]|EDAC MC[0-9]+: [0-9]+ (CE|UE)' | tail -n 20; }

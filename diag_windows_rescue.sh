@@ -14,6 +14,30 @@ sec(){ printf '\n==================== %s\n' "$*" >> "$SEC"; }
 run(){ { echo "\$ $*"; timeout 120 bash -c "$*" 2>&1 | head -n 200; } >> "$SEC"; }
 has(){ command -v "$1" >/dev/null 2>&1; }
 [ "$(id -u)" = 0 ] || { echo "Нужен root: sudo bash $0"; exit 1; }
+# Машиночитаемая сводка для расширения/ИИ: одна строка на диск, значения SMART без разбора текста. «-» — показателя нет.
+pvsummary(){ local os="$1" d i a v
+  echo "===PVSUMMARY==="
+  echo "os=$os cpu=\"$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)\" threads=$(nproc) ram_gb=$(free -g | awk '/Mem:/{print $2}')"
+  echo "nvme_pci=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ) nvme_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .) disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vE '^(loop|zram|sr|ram)' | grep -c .)"
+  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+    i=$(smartctl -i /dev/$d 2>/dev/null); a=$(smartctl -H -A /dev/$d 2>/dev/null)
+    f(){ printf "%s\n%s\n" "$i" "$a" | awk -F: -v k="$1" '$1 ~ "^"k"$" {sub(/^[ \t]+/,"",$2); for(j=3;j<=NF;j++) $2=$2":"$j; print $2; exit}'; }
+    at(){ echo "$a" | awk -v n="$1" '$2==n{print $10; exit}' | grep -oE '^[0-9]+'; }
+    nv(){ f "$1" | tr -d ' ,%' | grep -oE '^(0x)?[0-9a-fA-F]+'; }
+    local model serial typ health poh temp
+    model=$(f '(Device Model|Model Number|Product)' | tr -d '"'); serial=$(f 'Serial Number' | tr -d ' ')
+    case "$d" in nvme*) typ=nvme;; *) [ "$(cat /sys/block/$d/queue/rotational 2>/dev/null)" = 1 ] && typ=hdd || typ=ssd;; esac
+    health=$(f '(SMART overall-health self-assessment test result|SMART Health Status)' | awk '{print $1}')
+    poh=$(at Power_On_Hours); [ -z "$poh" ] && poh=$(nv 'Power On Hours')
+    temp=$(at Temperature_Celsius); [ -z "$temp" ] && temp=$(f 'Temperature' | grep -oE '^[0-9]+')
+    printf 'DISK dev=/dev/%s type=%s size=%s model="%s" serial=%s health=%s realloc=%s pending=%s uncorr=%s crc=%s media=%s wear=%s crit=%s temp=%s poh=%s unsafe=%s errlog=%s\n' \
+      "$d" "$typ" "$(lsblk -dno SIZE /dev/$d | xargs)" "${model:--}" "${serial:--}" "${health:-unknown}" \
+      "$(v=$(at Reallocated_Sector_Ct); echo ${v:--})" "$(v=$(at Current_Pending_Sector); echo ${v:--})" "$(v=$(at Offline_Uncorrectable); echo ${v:--})" "$(v=$(at UDMA_CRC_Error_Count); echo ${v:--})" \
+      "$(v=$(nv 'Media and Data Integrity Errors'); echo ${v:--})" "$(v=$(nv 'Percentage Used'); [ -z "$v" ] && v=$(echo "$a" | awk '$2 ~ /^(Wear_Leveling_Count|Media_Wearout_Indicator|Percent_Lifetime_Remain)$/{print 100-$4; exit}'); echo ${v:--})" \
+      "$(v=$(nv 'Critical Warning'); echo ${v:--})" "${temp:--}" "${poh:--}" "$(v=$(nv 'Unsafe Shutdowns'); echo ${v:--})" \
+      "$(v=$(nv 'Error Information Log Entries'); [ -z "$v" ] && v=$(smartctl -l error /dev/$d 2>/dev/null | awk '/ATA Error Count:/{print $4; exit}'); echo ${v:--})"
+  done
+  echo "===PVSUMMARY-END==="; }
 inst(){ # install a missing tool in the rescue system (only the rescue RAM disk is touched, not Windows)
   has apt-get && { apt-get -qq update >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get -qq install -y "$@" >/dev/null 2>&1; return; }
   has dnf && { dnf -q install -y "$@" >/dev/null 2>&1; return; }; has yum && yum -q install -y "$@" >/dev/null 2>&1; }
@@ -113,6 +137,7 @@ if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1
 { echo "ДИАГНОСТИКА WINDOWS (из rescue) $(hostname) — $(date '+%F %T %Z')"
   echo
   if [ ${#ISSUES[@]} -eq 0 ]; then echo "✅ Проблем не найдено."; else echo "Найдено: ${#ISSUES[@]}"; printf '%s\n' "${ISSUES[@]}"; fi
+  echo; pvsummary windows
   echo; echo "Подробности ниже."; cat "$SEC"; } > "$OUT"
 sed -n '1,/Подробности ниже/p' "$OUT"
 echo "Полный отчёт: $OUT"
