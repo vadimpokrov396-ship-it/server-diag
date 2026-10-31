@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """win_evtx_report.py <Windows-dir> [days] — read-only summary of Windows event logs (System/Application .evtx)
 from a Windows disk mounted read-only (e.g. in a Linux rescue system). Prints '!! ' lines for problems, then details."""
-import os, re, sys, collections, datetime
+import os, re, sys, collections, datetime, html
 from Evtx.Evtx import Evtx
 
 WIN = sys.argv[1]; DAYS = int(sys.argv[2]) if len(sys.argv) > 2 else 30
@@ -48,6 +48,14 @@ rx_prov = re.compile(r'<Provider Name="([^"]+)"'); rx_id = re.compile(r'<EventID
 rx_time = re.compile(r'<TimeCreated SystemTime="([^"]+)"'); rx_data = re.compile(r'<Data(?: Name="([^"]*)")?>([^<]*)</Data>')
 
 
+def clean(v):
+    # старые события (6008 и др.) хранят параметры как экранированный XML <string>…</string>; убираем экранирование и метки направления текста
+    v = html.unescape(html.unescape(v or '')).replace('\u200e', '').replace('\u200f', '')
+    parts = re.findall(r'<string>(.*?)</string>', v, re.S)
+    if parts: v = ' | '.join(p.strip() for p in parts if p.strip())
+    return re.sub(r'\s+', ' ', v).strip()
+
+
 def scan(path):
     hits = collections.defaultdict(list)
     try:
@@ -67,7 +75,7 @@ def scan(path):
                         try:
                             if datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S') < SINCE: break
                         except ValueError: pass
-                        data = ' | '.join((n + '=' if n else '') + v for n, v in rx_data.findall(x) if v.strip())[:220]
+                        data = ' | '.join((n + '=' if n else '') + clean(v) for n, v in rx_data.findall(x) if clean(v))[:220]
                         hits[(sev, prov, eid, txt)].append((ts, data)); break
     except Exception as e:
         print('!! 🟡 не удалось прочитать %s: %s' % (os.path.basename(path), e))
@@ -83,7 +91,7 @@ order = {'bad': 0, 'warn': 1, 'info': 2}
 items = sorted(allh.items(), key=lambda kv: (order[kv[0][0]], -len(kv[1])))
 for (sev, prov, eid, txt), ev in items:
     if sev != 'info':
-        print('!! %s %s: %d раз за %d дн. (последний %s) [%s/%d]' % ('🔴' if sev == 'bad' else '🟡', txt, len(ev), DAYS, max(e[0] for e in ev), prov, eid))
+        print('!! %s %s: %d раз за %d дн. (последний %s UTC) [%s/%d]' % ('🔴' if sev == 'bad' else '🟡', txt, len(ev), DAYS, max(e[0] for e in ev), prov, eid))
 # ---- pattern analysis (28/10): who shuts the server down, and does it happen on a schedule?
 def _dt(ts):
     try: return datetime.datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
@@ -97,6 +105,21 @@ if inits:
     print('!! %s кто выключал/перезагружал сервер чаще всего: %s (%d раз)' % ('🔴' if n >= 3 else '🟡', top, n))
     if 'wlms' in ' '.join(inits).lower():
         print('!! 🔴 ГЛАВНАЯ ПРИЧИНА, вероятно: сервер выключает служба лицензий WLMS (wlms.exe) — Windows не активирована или закончилась ознакомительная (Evaluation) версия. Нужна активация/лицензия.')
+# Kernel-Power 41: BugcheckCode=0 — это не синий экран, а зависание или жёсткий сброс/пропадание питания
+kp = [d for (sev, prov, eid, txt), ev in allh.items() if eid == 41 and 'kernel-power' in prov.lower() for _, d in ev]
+if kp:
+    zero = sum(1 for d in kp if re.search(r'BugcheckCode=0\b', d))
+    if zero == len(kp):
+        print('!! ℹ️ внезапные перезагрузки (Kernel-Power 41) без кода синего экрана (BugcheckCode=0): система зависла или её сбросили кнопкой/по питанию (в т.ч. Reset из панели); дампа нет')
+    elif zero < len(kp):
+        print('!! 🔴 среди внезапных перезагрузок есть синие экраны: %d из %d с кодом BugCheck (см. детали)' % (len(kp) - zero, len(kp)))
+# 6008: когда система перестала работать и когда загрузилась снова — сколько сервер «лежал»
+boots = sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid == 12 and 'kernel-general' in prov.lower() for e in ev)
+for (sev, prov, eid, txt), ev in allh.items():
+    if eid == 6008 and 'eventlog' in prov.lower():
+        for ts, d in sorted(ev)[-3:]:
+            m = re.match(r'([\d:]+ ?[AP]?M?) \| ([\d/.]+)', d)
+            if m: print('!! ℹ️ Windows перестала работать %s %s (время сервера), следующая загрузка — %s UTC: всё это время сервер был недоступен' % (m.group(2), m.group(1), ts))
 stops = sorted({t for (sev, prov, eid, txt), ev in allh.items() if (eid in (41, 6008, 1074, 6006)) for t in (_dt(e[0]) for e in ev) if t})
 if len(stops) >= 4:
     gaps = [(b - a).total_seconds() / 60 for a, b in zip(stops, stops[1:]) if (b - a).total_seconds() > 300]
