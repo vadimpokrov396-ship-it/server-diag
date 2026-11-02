@@ -108,8 +108,21 @@ for name, st in STATS.items():
         print('!! 🟡 журнал %s прочитан частично: записей %d, ошибок разбора %d — часть событий могла не попасть в проверку' % (name, st['n'], st['bad']))
     if name == 'System.evtx' and st['last']:
         try:
-            age = (NOW - datetime.datetime.strptime(st['last'], '%Y-%m-%d %H:%M:%S')).days
-            if age >= 3: print('!! 🟡 последнее событие в журнале System — %s UTC (%d дн. назад): журнал не пишется, был очищен или часы Windows сбиты — события последних дней не видны' % (st['last'], age))
+            last = datetime.datetime.strptime(st['last'], '%Y-%m-%d %H:%M:%S')
+            age = (NOW - last).days
+            if age >= 3:
+                # Windows при этом работала? Реестр (config) и CBS.log пишутся, пока система запущена
+                alive = []
+                for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'Logs/CBS/CBS.log'):
+                    try: alive.append(datetime.datetime.fromtimestamp(os.path.getmtime(os.path.join(WIN, p)), datetime.timezone.utc).replace(tzinfo=None))
+                    except OSError: pass
+                ran = max(alive) if alive else None
+                if ran and (ran - last).days >= 2:
+                    print('!! 🟡 журнал событий Windows НЕ ПИШЕТСЯ: последнее событие %s UTC, а Windows работала как минимум до %s UTC (реестр/CBS.log) — служба «Журнал событий Windows» отключена или журналы очищаются. Причину сбоев по журналам не установить: попросите клиента включить службу журнала (Windows Event Log → Автоматически)' % (st['last'], ran.strftime('%Y-%m-%d %H:%M')))
+                else:
+                    print('!! 🟡 последнее событие в журнале System — %s UTC (%d дн. назад): журнал не пишется, был очищен или часы Windows сбиты — события последних дней не видны' % (st['last'], age))
+            if st['n'] < 2000 and st['first'] and (last - datetime.datetime.strptime(st['first'], '%Y-%m-%d %H:%M:%S')).days > 180:
+                print('!! ℹ️ в журнале System всего %d записей за %s — %s: для работающей Windows это очень мало (журнал чистили или ведение отключено)' % (st['n'], st['first'][:10], st['last'][:10]))
         except ValueError: pass
     if name == 'System.evtx' and st['first'] and st['first'] > SINCE.strftime('%Y-%m-%d %H:%M:%S'):
         print('!! ℹ️ журнал System хранит события только с %s UTC (меньше %d дн.) — старые сбои могли не попасть в проверку' % (st['first'], DAYS))
