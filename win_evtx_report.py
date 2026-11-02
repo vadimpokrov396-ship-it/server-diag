@@ -122,7 +122,10 @@ for name, st in STATS.items():
                 else:
                     print('!! 🟡 последнее событие в журнале System — %s UTC (%d дн. назад): журнал не пишется, был очищен или часы Windows сбиты — события последних дней не видны' % (st['last'], age))
             if st['n'] < 2000 and st['first'] and (last - datetime.datetime.strptime(st['first'], '%Y-%m-%d %H:%M:%S')).days > 180:
-                print('!! ℹ️ в журнале System всего %d записей за %s — %s: для работающей Windows это очень мало (журнал чистили или ведение отключено)' % (st['n'], st['first'][:10], st['last'][:10]))
+                if st['win'] >= st['n'] * 0.7:
+                    print('!! ℹ️ журнал System: %d из %d событий — за последние %d дн., старейшее — %s: Windows развёрнута из готового образа недавно (свежая установка у клиента), а не работает годами' % (st['win'], st['n'], DAYS, st['first'][:10]))
+                else:
+                    print('!! ℹ️ в журнале System всего %d записей за %s — %s: для работающей Windows это очень мало (журнал чистили или ведение отключено)' % (st['n'], st['first'][:10], st['last'][:10]))
         except ValueError: pass
     if name == 'System.evtx' and st['first'] and st['first'] > SINCE.strftime('%Y-%m-%d %H:%M:%S'):
         print('!! ℹ️ журнал System хранит события только с %s UTC (меньше %d дн.) — старые сбои могли не попасть в проверку' % (st['first'], DAYS))
@@ -139,9 +142,24 @@ inits = collections.Counter()
 for (sev, prov, eid, txt), ev in allh.items():
     if eid == 1074 and 'user32' in prov.lower():
         for _, d in ev: inits[re.split(r'\s*\|\s*', d)[0].split('=')[-1].strip()[:90]] += 1
+# 1074 — штатные перезагрузки: обновления Windows и ручные (shutdown.exe / меню Пуск) — это не сбой
+kinds = collections.Counter()
+for (sev, prov, eid, txt), ev in allh.items():
+    if eid == 1074 and 'user32' in prov.lower():
+        for _, d in ev:
+            f = dict(x.split('=', 1) for x in re.split(r'\s*\|\s*', d) if '=' in x)
+            who = f.get('param1', '').lower(); why = f.get('param3', '').lower(); usr = f.get('param7', '')
+            if 'upgrade' in why or 'update' in why or 'trustedinstaller' in who or 'musnotif' in who: kinds['обновления Windows'] += 1
+            elif 'wlms' in who: kinds['служба лицензий WLMS'] += 1
+            elif 'shutdown.exe' in who or 'explorer.exe' in who or 'winlogon' in who: kinds['вручную' + (' (' + usr.split('\\')[-1] + ')' if usr and 'NT AUTHORITY' not in usr else '')] += 1
+            else: kinds[(f.get('param1', '?').split('\\')[-1] or '?')[:60]] += 1
 if inits:
     top, n = inits.most_common(1)[0]
-    print('!! %s кто выключал/перезагружал сервер чаще всего: %s (%d раз)' % ('🔴' if n >= 3 else '🟡', top, n))
+    planned = sum(v for k, v in kinds.items() if k == 'обновления Windows' or k.startswith('вручную'))
+    if planned == sum(kinds.values()) and n < 3:
+        print('!! ℹ️ штатные перезагрузки (не сбой): %s' % ', '.join('%s — %d' % kv for kv in kinds.most_common()))
+    else:
+        print('!! %s кто выключал/перезагружал сервер чаще всего: %s (%d раз); по причинам: %s' % ('🔴' if n >= 3 else '🟡', top, n, ', '.join('%s — %d' % kv for kv in kinds.most_common())))
     if 'wlms' in ' '.join(inits).lower():
         print('!! 🔴 ГЛАВНАЯ ПРИЧИНА, вероятно: сервер выключает служба лицензий WLMS (wlms.exe) — Windows не активирована или закончилась ознакомительная (Evaluation) версия. Нужна активация/лицензия.')
 # Kernel-Power 41: BugcheckCode=0 — это не синий экран, а зависание или жёсткий сброс/пропадание питания
@@ -177,6 +195,11 @@ for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config
 if traces:
     lt, lp = max(traces)
     print('!! ℹ️ Windows в последний раз записывала на диск %s UTC (%s) — примерно тогда система работала в последний раз; если с тех пор прошли дни, сервер с тех пор не загружался в Windows или зависал' % (lt.strftime('%Y-%m-%d %H:%M'), lp))
+    # Хронология: последняя загрузка → последняя запись на диск → сейчас (rescue). Нет новых загрузок и дни тишины = зависание
+    lb = _dt(boots[-1]) if boots else None
+    idle = (NOW - lt).total_seconds() / 86400
+    if lb and lt >= lb and idle >= 1:
+        print('!! 🟡 Windows вероятно зависла: после последней загрузки %s UTC она работала минимум до %s UTC, затем %.1f дн. до этой диагностики ничего не записала на диск и ни разу не перезагрузилась — система висела (или сервер был выключен) с ~%s UTC. Сверьте с историей POWER/PING в панели' % (lb.strftime('%Y-%m-%d %H:%M'), lt.strftime('%Y-%m-%d %H:%M'), idle, lt.strftime('%Y-%m-%d %H:%M')))
 print('\n---- event logs read')
 for t, p in sorted(traces, reverse=True): print('   изменён %s UTC  %s' % (t.strftime('%Y-%m-%d %H:%M'), p))
 for name, st in STATS.items(): print('   %s: записей %d, ошибок разбора %d, в окне %d дн.: %d, события с %s по %s UTC' % (name, st['n'], st['bad'], DAYS, st['win'], st['first'] or '—', st['last'] or '—'))
