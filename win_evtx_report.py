@@ -169,7 +169,16 @@ if len(stops) >= 4:
         near = sum(1 for g in gaps if abs(g - med) <= max(10, med * 0.15))
         if near >= max(3, len(gaps) * 0.6):
             print('!! 🔴 выключения идут ПО РАСПИСАНИЮ: примерно каждые %d мин (%d из %d интервалов). Ищи причину-«таймер»: лицензия (WLMS), задача в Планировщике, политика/скрипт, ИБП/BIOS, хостер.' % (round(med), near, len(gaps)))
+# Когда Windows в последний раз что-то писала на диск — реестр и CBS.log меняются, пока система работает
+traces = []
+for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config/SAM', 'Logs/CBS/CBS.log', 'System32/winevt/Logs/System.evtx', 'System32/LogFiles'):
+    try: traces.append((datetime.datetime.fromtimestamp(os.path.getmtime(os.path.join(WIN, p)), datetime.timezone.utc).replace(tzinfo=None), p))
+    except OSError: pass
+if traces:
+    lt, lp = max(traces)
+    print('!! ℹ️ Windows в последний раз записывала на диск %s UTC (%s) — примерно тогда система работала в последний раз; если с тех пор прошли дни, сервер с тех пор не загружался в Windows или зависал' % (lt.strftime('%Y-%m-%d %H:%M'), lp))
 print('\n---- event logs read')
+for t, p in sorted(traces, reverse=True): print('   изменён %s UTC  %s' % (t.strftime('%Y-%m-%d %H:%M'), p))
 for name, st in STATS.items(): print('   %s: записей %d, ошибок разбора %d, в окне %d дн.: %d, события с %s по %s UTC' % (name, st['n'], st['bad'], DAYS, st['win'], st['first'] or '—', st['last'] or '—'))
 print('\n---- details (last 8 of each)')
 for (sev, prov, eid, txt), ev in items:

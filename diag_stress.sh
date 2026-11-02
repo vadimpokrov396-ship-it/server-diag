@@ -25,7 +25,9 @@ echo "Тест под нагрузкой: $CPU, $CORES потоков, ${RAM} Г
 [ "$IDLE" = 0 ] && echo "⚠ датчики температуры не найдены — смотрите только, не выключится ли сервер"
 
 PIDS=()
-if has stress-ng; then stress-ng --cpu 0 --vm 2 --vm-bytes 60% --timeout "${DUR}s" >/dev/null 2>&1 & PIDS+=($!); TOOL="stress-ng (все ядра + 60% RAM)"
+SLOG=$(mktemp)
+# --verify: память не просто нагружается, а проверяется — записанное сверяется с прочитанным (битая планка RAM даёт ошибки)
+if has stress-ng; then stress-ng --cpu 0 --vm 2 --vm-bytes 60% --verify --timeout "${DUR}s" >"$SLOG" 2>&1 & PIDS+=($!); TOOL="stress-ng (все ядра + 60% RAM с проверкой содержимого)"
 else for i in $(seq "$CORES"); do ( while :; do :; done ) & PIDS+=($!); done; TOOL="встроенная нагрузка на все ядра (stress-ng не установился)"; fi
 stopload(){ for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; pkill -f 'stress-ng' 2>/dev/null; }
 trap 'stopload' EXIT INT TERM
@@ -41,6 +43,7 @@ while :; do
 done
 stopload; trap - EXIT INT TERM
 echo "Нагрузка снята, жду 30 с — смотрю, как остывает…"; sleep 30; COOL=$(tmax); E1=$(hwerr)
+MEMERR=$(grep -aciE 'verif.*(fail|error)|memory error|miscompare|unexpected value|fail:' "$SLOG" 2>/dev/null); MEMERR=${MEMERR:-0}
 
 ISSUES=()
 if [ "$PEAK" = 0 ]; then ISSUES+=("🟡 датчики температуры CPU недоступны — тест показал только, что сервер не выключился за $((EL/60)) мин")
@@ -50,13 +53,16 @@ elif [ "$PEAK" -ge 90 ]; then ISSUES+=("🟡 CPU горячий: до ${PEAK} °
 else ISSUES+=("✅ $((EL/60)) мин под полной нагрузкой без отключения, максимум ${PEAK} °C — охлаждение справляется"); fi
 [ "$PEAK" -gt 0 ] && [ $((PEAK - COOL)) -lt 15 ] && ISSUES+=("🟡 через 30 с после снятия нагрузки всё ещё ${COOL} °C — остывает медленно (слабый обдув)")
 [ "$E1" -gt "$E0" ] && ISSUES+=("🔴 во время нагрузки появились аппаратные ошибки процессора/памяти (MCE/EDAC): $((E1 - E0))")
+[ "$MEMERR" -gt 0 ] && ISSUES+=("🔴 ошибки памяти при проверке под нагрузкой (stress-ng --verify): $MEMERR — записанное в RAM не совпало с прочитанным, вероятна неисправность модуля памяти")
 
 { echo "ТЕСТ ПОД НАГРУЗКОЙ (из rescue) $(hostname) — $(date '+%F %T %Z')"
   echo; printf '%s\n' "${ISSUES[@]}"; echo
   echo "CPU: $CPU · потоков: $CORES · RAM: ${RAM} ГБ · нагрузка: $TOOL"
-  echo "STRESS-SUMMARY idle=${IDLE} peak=${PEAK} peak_at=${PEAKAT} cool=${COOL} dur=${EL} reason=${REASON} stop=${STOP} mce_new=$((E1 - E0)) cpu=\"${CPU}\""
+  echo "STRESS-SUMMARY idle=${IDLE} peak=${PEAK} peak_at=${PEAKAT} cool=${COOL} dur=${EL} reason=${REASON} stop=${STOP} mce_new=$((E1 - E0)) memerr=${MEMERR} cpu=\"${CPU}\""
   echo "Без нагрузки: ${IDLE} °C · пик: ${PEAK} °C на +$((PEAKAT/60))м$((PEAKAT%60))с · через 30 с после нагрузки: ${COOL} °C · длительность: $((EL/60))м$((EL%60))с · остановлен: $([ "$REASON" = overheat ] && echo "по перегреву (порог ${STOP} °C)" || echo "по времени")"
   echo; echo "Замеры:"; printf '%s' "$SAMPLES"
+  [ "$MEMERR" -gt 0 ] && { echo; echo "Ошибки проверки памяти (stress-ng):"; grep -aiE 'verif.*(fail|error)|memory error|miscompare|unexpected value|fail:' "$SLOG" | head -n 20; }
   [ "$E1" -gt "$E0" ] && { echo; echo "Аппаратные ошибки в dmesg:"; dmesg | grep -aiE 'mce: \[Hardware Error\]|Machine check|\[Hardware Error\]|EDAC MC[0-9]+: [0-9]+ (CE|UE)' | tail -n 20; }
 } > "$OUT"
+rm -f "$SLOG"
 echo; printf '%s\n' "${ISSUES[@]}"; echo "Полный отчёт: $OUT"
