@@ -30,12 +30,13 @@ pvsummary(){ local os="$1" d i a v
     health=$(f '(SMART overall-health self-assessment test result|SMART Health Status)' | awk '{print $1}')
     poh=$(at Power_On_Hours); [ -z "$poh" ] && poh=$(nv 'Power On Hours')
     temp=$(at Temperature_Celsius); [ -z "$temp" ] && temp=$(f 'Temperature' | grep -oE '^[0-9]+')
-    printf 'DISK dev=/dev/%s type=%s size=%s model="%s" serial=%s health=%s realloc=%s pending=%s uncorr=%s crc=%s media=%s wear=%s crit=%s temp=%s poh=%s unsafe=%s errlog=%s\n' \
+    printf 'DISK dev=/dev/%s type=%s size=%s model="%s" serial=%s health=%s realloc=%s pending=%s uncorr=%s crc=%s media=%s wear=%s crit=%s temp=%s poh=%s unsafe=%s errlog=%s cycles=%s\n' \
       "$d" "$typ" "$(lsblk -dno SIZE /dev/$d | xargs)" "${model:--}" "${serial:--}" "${health:-unknown}" \
       "$(v=$(at Reallocated_Sector_Ct); echo ${v:--})" "$(v=$(at Current_Pending_Sector); echo ${v:--})" "$(v=$(at Offline_Uncorrectable); echo ${v:--})" "$(v=$(at UDMA_CRC_Error_Count); echo ${v:--})" \
       "$(v=$(nv 'Media and Data Integrity Errors'); echo ${v:--})" "$(v=$(nv 'Percentage Used'); [ -z "$v" ] && v=$(echo "$a" | awk '$2 ~ /^(Wear_Leveling_Count|Media_Wearout_Indicator|Percent_Lifetime_Remain)$/{print 100-$4; exit}'); echo ${v:--})" \
       "$(v=$(nv 'Critical Warning'); echo ${v:--})" "${temp:--}" "${poh:--}" "$(v=$(nv 'Unsafe Shutdowns'); echo ${v:--})" \
-      "$(v=$(nv 'Error Information Log Entries'); [ -z "$v" ] && v=$(smartctl -l error /dev/$d 2>/dev/null | awk '/ATA Error Count:/{print $4; exit}'); echo ${v:--})"
+      "$(v=$(nv 'Error Information Log Entries'); [ -z "$v" ] && v=$(smartctl -l error /dev/$d 2>/dev/null | awk '/ATA Error Count:/{print $4; exit}'); echo ${v:--})" \
+      "$(v=$(nv 'Power Cycles'); [ -z "$v" ] && v=$(at Power_Cycle_Count); echo ${v:--})"
   done
   echo "===PVSUMMARY-END==="; }
 inst(){ # install a missing tool in the rescue system (only the rescue RAM disk is touched, not Windows)
@@ -119,7 +120,7 @@ if [ -n "$WINROOT" ]; then
   PY=python3; VENV=/tmp/evtx_venv
   if ! $PY -c 'import Evtx' 2>/dev/null; then
     has python3 || inst python3
-    { $PY -m venv $VENV || { inst python3-venv && $PY -m venv $VENV; }; } >/dev/null 2>&1 && $VENV/bin/pip -q install python-evtx >/dev/null 2>&1 && PY=$VENV/bin/python
+    { $PY -m venv $VENV || { inst python3-venv && $PY -m venv $VENV; }; } >/dev/null 2>&1 && { $VENV/bin/pip -q install python-evtx >/dev/null 2>&1 || { $VENV/bin/pip -q install setuptools wheel && $VENV/bin/pip -q install --no-build-isolation python-evtx; } >/dev/null 2>&1; } && PY=$VENV/bin/python
   fi
   REP="$DIR/win_evtx_report.py"
   [ -f "$REP" ] || curl -fsSL "${DIAG_BASE:-https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main}/win_evtx_report.py" -o /tmp/win_evtx_report.py 2>/dev/null && [ -f /tmp/win_evtx_report.py ] && REP=/tmp/win_evtx_report.py

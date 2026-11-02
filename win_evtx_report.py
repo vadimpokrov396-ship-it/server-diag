@@ -56,13 +56,24 @@ def clean(v):
     return re.sub(r'\s+', ' ', v).strip()
 
 
+STATS = {}
+
+
 def scan(path):
     hits = collections.defaultdict(list)
+    st = STATS.setdefault(os.path.basename(path), {'n': 0, 'bad': 0, 'first': None, 'last': None, 'win': 0})
     try:
         with Evtx(path) as log:
             for rec in log.records():
                 try: x = rec.xml()
-                except Exception: continue
+                except Exception: st['bad'] += 1; continue
+                st['n'] += 1
+                t0 = rx_time.search(x)
+                if t0:
+                    ts0 = t0.group(1)[:19].replace('T', ' ')
+                    if not st['first'] or ts0 < st['first']: st['first'] = ts0
+                    if not st['last'] or ts0 > st['last']: st['last'] = ts0
+                    if ts0 >= SINCE.strftime('%Y-%m-%d %H:%M:%S'): st['win'] += 1
                 m = rx_id.search(x); p = rx_prov.search(x)
                 if not m or not p: continue
                 eid = int(m.group(1)); prov = p.group(1)
@@ -87,6 +98,21 @@ for name in ('System.evtx', 'Application.evtx'):
     f = os.path.join(LOGS, name)
     if os.path.exists(f): allh.update(scan(f))
     else: print('!! 🟡 нет журнала', os.path.basename(f))
+# Журналы прочитались? Пустой/непрочитанный журнал ≠ «ошибок нет» (28/10: сервер гас, а отчёт был чистым — журналы не разобрались)
+NOW = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+for name, st in STATS.items():
+    if st['n'] == 0:
+        print('!! 🟡 журнал %s не прочитан (записей 0, ошибок разбора %d) — события Windows НЕ проверены, вывод «ошибок нет» по нему делать нельзя' % (name, st['bad']))
+        continue
+    if st['bad'] > st['n']:
+        print('!! 🟡 журнал %s прочитан частично: записей %d, ошибок разбора %d — часть событий могла не попасть в проверку' % (name, st['n'], st['bad']))
+    if name == 'System.evtx' and st['last']:
+        try:
+            age = (NOW - datetime.datetime.strptime(st['last'], '%Y-%m-%d %H:%M:%S')).days
+            if age >= 3: print('!! 🟡 последнее событие в журнале System — %s UTC (%d дн. назад): журнал не пишется, был очищен или часы Windows сбиты — события последних дней не видны' % (st['last'], age))
+        except ValueError: pass
+    if name == 'System.evtx' and st['first'] and st['first'] > SINCE.strftime('%Y-%m-%d %H:%M:%S'):
+        print('!! ℹ️ журнал System хранит события только с %s UTC (меньше %d дн.) — старые сбои могли не попасть в проверку' % (st['first'], DAYS))
 order = {'bad': 0, 'warn': 1, 'info': 2}
 items = sorted(allh.items(), key=lambda kv: (order[kv[0][0]], -len(kv[1])))
 for (sev, prov, eid, txt), ev in items:
@@ -115,6 +141,8 @@ if kp:
         print('!! 🔴 среди внезапных перезагрузок есть синие экраны: %d из %d с кодом BugCheck (см. детали)' % (len(kp) - zero, len(kp)))
 # 6008: когда система перестала работать и когда загрузилась снова — сколько сервер «лежал»
 boots = sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid == 12 and 'kernel-general' in prov.lower() for e in ev)
+if STATS.get('System.evtx', {}).get('n'):
+    print('!! ℹ️ загрузок Windows за %d дн.: %d%s' % (DAYS, len(boots), (' — последние: ' + ', '.join(b[:16] for b in boots[-5:]) + ' UTC') if boots else ' — Windows за это время ни разу не перезагружалась (если сервер «выключался», а загрузок нет — он пропадал из сети/зависал без перезагрузки или журнал не пишется)'))
 for (sev, prov, eid, txt), ev in allh.items():
     if eid == 6008 and 'eventlog' in prov.lower():
         for ts, d in sorted(ev)[-3:]:
@@ -128,6 +156,8 @@ if len(stops) >= 4:
         near = sum(1 for g in gaps if abs(g - med) <= max(10, med * 0.15))
         if near >= max(3, len(gaps) * 0.6):
             print('!! 🔴 выключения идут ПО РАСПИСАНИЮ: примерно каждые %d мин (%d из %d интервалов). Ищи причину-«таймер»: лицензия (WLMS), задача в Планировщике, политика/скрипт, ИБП/BIOS, хостер.' % (round(med), near, len(gaps)))
+print('\n---- event logs read')
+for name, st in STATS.items(): print('   %s: записей %d, ошибок разбора %d, в окне %d дн.: %d, события с %s по %s UTC' % (name, st['n'], st['bad'], DAYS, st['win'], st['first'] or '—', st['last'] or '—'))
 print('\n---- details (last 8 of each)')
 for (sev, prov, eid, txt), ev in items:
     print('\n[%s] %s / %d — %s — %d' % (sev, prov, eid, txt, len(ev)))
