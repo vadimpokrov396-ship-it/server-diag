@@ -3,7 +3,8 @@
 # Changes nothing: the installed system's partitions are mounted READ-ONLY (ext4 noload, xfs norecovery), RAID arrays are assembled read-only.
 # Checks: disk health (SMART, NVMe), RAID, ECC memory counters, free space/inodes, and the installed system's kernel log for the last 30 days:
 # filesystem and I/O errors, disk link resets, out-of-memory kills, hardware errors (MCE), kernel crashes and hangs, unclean shutdowns,
-# segfaults, saved kernel crash dumps (kdump/pstore), services that failed in the last 7 days, disk temperature and SMART error logs.
+# segfaults, saved kernel crash dumps (kdump/pstore), services that failed in the last 7 days, disk temperature and SMART error logs,
+# accounts: when the root password was changed, extra UID 0 users, SSH keys, SSH logins and password brute force.
 # Run as root: bash diag_linux_rescue.sh     Report: diag_linux_rescue_<host>_<date>.txt next to the script.
 LC_ALL=C
 DIR="$(dirname "$(readlink -f "$0")")"; DAYS=${DAYS:-30}
@@ -183,6 +184,60 @@ if [ -n "$ROOT" ]; then
       run "$J -b $last -n 60 -o short-iso"
     fi
   fi
+fi
+
+# Учётные записи: когда менялся пароль root, лишние root-пользователи, ключи SSH, входы и перебор паролей
+if [ -n "$ROOT" ]; then
+  echo "  + учётные записи, смена пароля и входы..."
+  sec "Accounts, password changes and logins"
+  NOWD=$(( $(date +%s) / 86400 ))
+  if [ -r "$ROOT/etc/shadow" ]; then
+    SHT=$(date -u -r "$ROOT/etc/shadow" '+%F %H:%M')
+    echo "/etc/shadow изменён $SHT UTC (время последней смены какого-либо пароля)" >> "$SEC"
+    while IFS=: read -r u h lc _; do
+      case "$h" in '$'*) ;; *) continue;; esac          # только учётки с настоящим паролем (не * / !)
+      case "$lc" in ''|*[!0-9]*) continue;; esac
+      d=$(date -u -d "@$((lc * 86400))" +%F); age=$((NOWD - lc))
+      echo "пароль $u: последняя смена $d ($age дн. назад)" >> "$SEC"
+      if [ "$u" = root ]; then
+        if [ $age -le "$DAYS" ]; then warn "пароль пользователя root менялся $d ($age дн. назад; /etc/shadow последний раз изменён $SHT UTC)"; else note "пароль пользователя root не менялся с $d"; fi
+      elif [ $age -le "$DAYS" ]; then warn "пароль пользователя $u менялся $d ($age дн. назад)"; fi
+    done < "$ROOT/etc/shadow"
+  fi
+  x0=$(awk -F: '$3==0 && $1!="root"{printf "%s ", $1}' "$ROOT/etc/passwd" 2>/dev/null)
+  [ -n "$x0" ] && bad "лишний пользователь с правами root (UID 0): ${x0}— если клиент его не создавал, сервер, вероятно, взломан"
+  run "awk -F: '\$3==0 || (\$3>=1000 && \$3<65534) {print \$1, \"uid=\"\$3, \$6, \$7}' '$ROOT/etc/passwd'"
+  for k in "$ROOT"/root/.ssh/authorized_keys "$ROOT"/home/*/.ssh/authorized_keys; do
+    [ -f "$k" ] || continue
+    m=$(stat -c %Y "$k"); n=$(grep -cE '^[^#]*(ssh-|ecdsa-|sk-)' "$k"); kt=$(date -u -d "@$m" '+%F %H:%M')
+    echo "${k#$ROOT}: ключей $n, изменён $kt UTC" >> "$SEC"
+    [ $(( ($(date +%s) - m) / 86400 )) -le "$DAYS" ] && warn "ключи SSH ${k#$ROOT} изменены $kt UTC (ключей: $n) — если клиент их не добавлял, это вход в обход пароля"
+  done
+  AL=$(mktemp)
+  [ -n "$J" ] && timeout 120 $J --since "-$DAYS days" -o short-iso _COMM=sshd _COMM=sshd-session _COMM=passwd _COMM=chpasswd _COMM=useradd _COMM=usermod _COMM=chage 2>/dev/null | tail -n 400000 > "$AL"
+  [ -s "$AL" ] || for f in $(ls -tr "$ROOT"/var/log/auth.log* "$ROOT"/var/log/secure* 2>/dev/null); do case "$f" in *.gz) zcat "$f";; *) cat "$f";; esac; done 2>/dev/null | tail -n 400000 > "$AL"
+  if [ -s "$AL" ]; then
+    PWL=$(grep -aE 'password changed for|pam_unix\((passwd|chpasswd):chauthtok\): password changed|chpasswd\[[0-9]+\]|changed password expiry' "$AL")
+    if [ -n "$PWL" ]; then
+      echo "--- смены пароля по журналу"; echo "$PWL" | tail -n 10 | cut -c1-200
+      r=$(echo "$PWL" | grep -a 'for root' | tail -1 | cut -c1-19)
+      [ -n "$r" ] && warn "в журнале: пароль root меняли командой passwd/chpasswd, последний раз $r"
+    fi >> "$SEC"
+    NU=$(grep -aE 'new user: name=' "$AL" | tail -n 5)
+    [ -n "$NU" ] && warn "за $DAYS дн. создавались новые пользователи: $(echo "$NU" | sed -nE 's/^(.{0,19}).*name=([^,]+).*/\2 (\1)/p' | tr '\n' ' ')— если клиент их не создавал, это признак взлома"
+    OKL=$(grep -aE 'Accepted (password|publickey|keyboard-interactive/pam) for' "$AL" | sed -nE 's/.*Accepted ([^ ]+) for ([^ ]+) from ([^ ]+).*/\2 \3 \1/p' | sort | uniq -c | sort -rn)
+    FAIL=$(grep -aE 'Failed password for|Invalid user|authentication failure;.*rhost=' "$AL" | grep -aoE '(from|rhost=) ?[0-9a-fA-F.:]+' | sed -E 's/^(from |rhost=)//' | sort | uniq -c | sort -rn)
+    nf=$(echo "$FAIL" | awk '{s+=$1} END{print s+0}')
+    [ "$nf" -ge 100 ] && warn "перебор паролей по SSH: $nf неудачных входов с $(echo "$FAIL" | grep -c .) IP за $DAYS дн. (больше всего: $(echo "$FAIL" | head -3 | awk '{printf "%s — %s, ", $2, $1}' | sed 's/, $//')) — отключите вход по паролю или смените порт"
+    [ -n "$OKL" ] && note "удачные входы по SSH за $DAYS дн.: $(echo "$OKL" | head -5 | awk '{printf "%s с %s (%s, %s раз); ", $2, $3, $4, $1}' | sed 's/; $//')"
+    # вход с того же IP, с которого шёл перебор — вероятный взлом
+    echo "$OKL" | while read -r c u ip how; do f=$(echo "$FAIL" | awk -v ip="$ip" '$2==ip{print $1}'); [ "${f:-0}" -ge 20 ] && echo "$u $ip $f"; done > "$AL.hit"
+    while read -r u ip f; do bad "успешный вход по SSH после перебора паролей: с IP $ip ($f неудачных попыток) вошли как $u — вероятный взлом"; done < "$AL.hit"
+    { echo "--- удачные входы SSH (раз, пользователь, IP, способ)"; echo "$OKL" | head -n 15; echo "--- неудачные входы по IP (топ)"; echo "$FAIL" | head -n 10; } >> "$SEC"
+    rm -f "$AL.hit"
+  else echo "журнал входов (sshd/auth.log) не найден" >> "$SEC"; fi
+  rm -f "$AL"
+  [ -s "$ROOT/var/log/wtmp" ] && has last && run "last -F -w -f '$ROOT/var/log/wtmp' | head -n 15"
 fi
 
 # Полные SMART-логи каждого диска (smartctl -x) — для поля «Entire SMART log» в заявке дата-центру

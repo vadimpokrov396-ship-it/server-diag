@@ -4,7 +4,8 @@
 # Run as root:   bash diag_windows_rescue.sh
 # Checks: disk health (SMART), partitions, NTFS "dirty" flag, free space, crash dumps (blue screens),
 # pending Windows updates, and Windows event logs (unexpected shutdowns, blue screens, disk/NTFS/hardware errors,
-# low memory, crashed services) for the last 30 days. Report: diag_windows_<host>_<date>.txt next to the script.
+# low memory, crashed services) for the last 30 days, local accounts (when the password was changed, by whom and from which IP,
+# new accounts, remote logins, password brute force). Report: diag_windows_<host>_<date>.txt next to the script.
 LC_ALL=C
 DIR="$(dirname "$(readlink -f "$0")")"; DAYS=${DAYS:-30}
 OUT="$DIR/diag_windows_$(hostname -s)_$(date +%Y%m%d_%H%M).txt"
@@ -128,6 +129,15 @@ if [ -n "$WINROOT" ]; then
     ev=$($PY "$REP" "$WINROOT" "$DAYS" 2>&1); echo "$ev" >> "$SEC"
     while IFS= read -r l; do ISSUES+=("${l#!! }"); done < <(echo "$ev" | grep '^!! ')
   else warn "не удалось поставить разборщик журналов (нет интернета в rescue?) — журналы событий не проверены"; fi
+  # учётные записи: когда менялся пароль (SAM), кто его менял и откуда входили (журнал Security)
+  ACC="$DIR/win_accounts.py"
+  [ -f "$ACC" ] || { curl -fsSL "${DIAG_BASE:-https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main}/win_accounts.py" -o /tmp/win_accounts.py 2>/dev/null && ACC=/tmp/win_accounts.py; }
+  if [ -f "$ACC" ] && has python3; then
+    echo "  + учётные записи, смена пароля и входы (SAM, журнал Security)..."
+    sec "Accounts, password changes and logins"
+    ac=$(timeout 300 $PY "$ACC" "$WINROOT" "$DAYS" 2>&1); echo "$ac" >> "$SEC"
+    while IFS= read -r l; do ISSUES+=("${l#!! }"); done < <(echo "$ac" | grep '^!! ')
+  fi
 fi
 
 # Полные SMART-логи каждого диска (smartctl -x) — для поля «Entire SMART log» в заявке дата-центру

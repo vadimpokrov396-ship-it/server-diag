@@ -174,11 +174,30 @@ if kp:
 boots = sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid == 12 and 'kernel-general' in prov.lower() for e in ev)
 if STATS.get('System.evtx', {}).get('n'):
     print('!! ℹ️ загрузок Windows за %d дн.: %d%s' % (DAYS, len(boots), (' — последние: ' + ', '.join(b[:16] for b in boots[-5:]) + ' UTC') if boots else ' — Windows за это время ни разу не перезагружалась (если сервер «выключался», а загрузок нет — он пропадал из сети/зависал без перезагрузки или журнал не пишется)'))
+# часовой пояс Windows: 6008 пишет время остановки по местным часам сервера, а загрузку — в UTC
+SI = {}
+try:
+    from win_accounts import sys_info
+    SI = sys_info(WIN)
+except Exception: pass
+def _local(tm, dt):
+    tm = tm.strip(); dt = dt.strip()
+    for f in ('%m/%d/%Y %I:%M:%S %p', '%m/%d/%Y %H:%M:%S', '%d.%m.%Y %H:%M:%S', '%Y/%m/%d %H:%M:%S', '%d/%m/%Y %H:%M:%S'):
+        try: return datetime.datetime.strptime(dt + ' ' + tm, f)
+        except ValueError: pass
 for (sev, prov, eid, txt), ev in allh.items():
     if eid == 6008 and 'eventlog' in prov.lower():
         for ts, d in sorted(ev)[-3:]:
             m = re.match(r'([\d:]+ ?[AP]?M?) \| ([\d/.]+)', d)
-            if m: print('!! ℹ️ Windows перестала работать %s %s (время сервера), следующая загрузка — %s UTC: всё это время сервер был недоступен' % (m.group(2), m.group(1), ts))
+            if not m: continue
+            lt = _local(m.group(1), m.group(2)); up = _dt(ts)
+            if lt and up and SI.get('bias') is not None:
+                stop = lt + datetime.timedelta(minutes=SI['bias']); mins = (up - stop).total_seconds() / 60
+                if -5 <= mins:
+                    print('!! ℹ️ Windows перестала работать ≈%s UTC (по часам сервера %s, пояс %s), загрузилась %s UTC — недоступна ≈%s' % (stop.strftime('%Y-%m-%d %H:%M'), lt.strftime('%H:%M'), SI.get('tz') or 'UTC%+d' % (-SI['bias'] / 60), ts[:16], ('%d мин' % max(1, round(mins))) if mins < 120 else ('%.1f ч' % (mins / 60)) if mins < 2880 else ('%.1f дн.' % (mins / 1440))))
+                    continue
+            print('!! ℹ️ Windows перестала работать %s %s (время сервера), следующая загрузка — %s UTC' % (m.group(2), m.group(1), ts))
+if SI.get('shutdown'): print('!! ℹ️ последнее штатное выключение Windows: %s UTC' % SI['shutdown'].strftime('%Y-%m-%d %H:%M'))
 stops = sorted({t for (sev, prov, eid, txt), ev in allh.items() if (eid in (41, 6008, 1074, 6006)) for t in (_dt(e[0]) for e in ev) if t})
 if len(stops) >= 4:
     gaps = [(b - a).total_seconds() / 60 for a, b in zip(stops, stops[1:]) if (b - a).total_seconds() > 300]

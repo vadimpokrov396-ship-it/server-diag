@@ -143,7 +143,7 @@ sudo bash server-diag-linux.sh
 
 ## Если сервер не загружается (rescue-режим)
 
-- [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) — для Windows-сервера, загруженного в Linux rescue (Hetzner, OVH или любой live-Linux). Разделы Windows подключаются только на чтение. Скрипт смотрит SMART, флаг «dirty» NTFS, минидампы, незавершённые обновления и журналы событий за 30 дней (3–10 минут):
+- [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) + [`win_accounts.py`](win_accounts.py) — для Windows-сервера, загруженного в Linux rescue (Hetzner, OVH или любой live-Linux). Разделы Windows подключаются только на чтение. Скрипт смотрит SMART, флаг «dirty» NTFS, минидампы, незавершённые обновления, журналы событий за 30 дней и учётные записи — когда менялся пароль, кто его менял и с какого IP, новые учётки, удалённые входы и перебор паролей (3–10 минут). Linux-версия проверяет то же по /etc/shadow, ключам SSH и журналу sshd:
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/vadimpokrov396-ship-it/server-diag/main/diag_windows_rescue.sh | sudo bash
@@ -227,6 +227,6 @@ The script only reads `/proc`, `/sys`, logs and the output of read-only commands
 - **"Windows protected your PC"?** Click "More info" → "Run anyway". The files are plain text, so you can read them first.
 - **Where is the report?** On Linux it is in the folder you ran the command from; the path is printed at the end. On Windows it is on the Desktop. It is a single self-contained HTML file.
 - **Everything is green but the server is slow?** Run the check while it is slow: CPU, memory and disk load are measured live.
-- **The server does not boot?** Use rescue mode with [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) (Windows disk read-only from a Linux rescue system) or [`diag_linux_rescue.sh`](diag_linux_rescue.sh) for a Linux server: it mounts the installed system read-only and checks SMART/NVMe, RAID, ECC, free space and inodes, and the installed system's kernel log for 30 days (I/O and filesystem errors, disk resets, MCE, OOM kills, kernel crashes and hangs, segfaults, kdump/pstore, unclean shutdowns, failed services). [`diag_linux.sh`](diag_linux.sh) is the old v1 Linux check.
+- **The server does not boot?** Use rescue mode with [`diag_windows_rescue.sh`](diag_windows_rescue.sh) + [`win_evtx_report.py`](win_evtx_report.py) (Windows disk read-only from a Linux rescue system) or [`diag_linux_rescue.sh`](diag_linux_rescue.sh) for a Linux server: it mounts the installed system read-only and checks SMART/NVMe, RAID, ECC, free space and inodes, and the installed system's kernel log for 30 days (I/O and filesystem errors, disk resets, MCE, OOM kills, kernel crashes and hangs, segfaults, kdump/pstore, unclean shutdowns, failed services). Both rescue scripts also report when the root/admin password was last changed, who changed it and from which IP, new accounts, SSH keys, remote logins and password brute force. [`diag_linux.sh`](diag_linux.sh) is the old v1 Linux check.
 
 Real sample reports with masked names: [`examples/`](examples/).
