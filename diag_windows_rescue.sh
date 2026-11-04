@@ -91,12 +91,15 @@ for p in $(lsblk -lno NAME,FSTYPE | awk '$2=="ntfs"{print $1}'); do
   run "ntfsinfo -m $dev 2>/dev/null | grep -iE 'Volume Name|Volume Flags|Cluster Size|Volume Size'"
   NI=$(timeout 60 ntfsinfo -m "$dev" 2>&1)
   echo "$NI" | grep -i 'Volume Flags' | grep -qi dirty && bad "раздел $dev помечен как «с ошибками» (dirty) — Windows хочет chkdsk"
-  # ntfsinfo не прочитал том — почему (незакрытый журнал после жёсткого сброса, гибернация/быстрый запуск, повреждение)
+  # ntfsinfo отказался открыть том — по его сообщению понятно почему
   if ! echo "$NI" | grep -qi 'Volume Name'; then
-    echo "ntfsinfo $dev: $(echo "$NI" | grep -v '^$' | tail -n 3 | tr '\n' ' ' | cut -c1-300)" >> "$SEC"
-    if echo "$NI" | grep -qiE 'hibernat|fast restart|fast startup'; then warn "раздел $dev: Windows в гибернации/быстром запуске — том не закрыт"
-    elif echo "$NI" | grep -qiE 'unclean|journal|logfile'; then warn "раздел $dev не закрыт штатно (журнал NTFS не сброшен — после жёсткого сброса/зависания): при загрузке Windows может запустить проверку диска (chkdsk), на большом томе это долго"
-    else warn "раздел $dev: ntfsinfo не смог прочитать том — возможное повреждение NTFS ($(echo "$NI" | grep -v '^$' | tail -n 1 | cut -c1-120))"; fi
+    echo "ntfsinfo $dev отказался открыть том: $(echo "$NI" | grep -v '^$' | head -n 2 | tr '\n' ' ' | cut -c1-200)" >> "$SEC"
+    run "ntfsinfo -f -m $dev 2>/dev/null | grep -iE 'Volume Name|Volume Flags|Cluster Size|Volume Size'"
+    if echo "$NI" | grep -qiE 'scheduled for check|volume is dirty'; then bad "раздел $dev помечен для проверки диска (dirty): при загрузке Windows сначала запустит chkdsk («Scanning and repairing drive») — на большом томе это может идти часами; если загрузка зависает или повторяется по кругу — запустить chkdsk C: /f вручную из среды восстановления Windows"
+    elif echo "$NI" | grep -qiE 'hibernat|fast restart|fast startup|unsafe state'; then warn "раздел $dev: Windows в гибернации/быстром запуске — том не закрыт"
+    elif echo "$NI" | grep -qiE 'journal file is unclean|safely powered off'; then warn "раздел $dev не закрыт штатно (журнал NTFS не сброшен — после жёсткого сброса/зависания): при загрузке Windows может запустить проверку диска (chkdsk)"
+    elif echo "$NI" | grep -qiE 'exclusively opened|already mounted|in use'; then note "раздел $dev уже открыт другим процессом — ntfsinfo пропущен"
+    else warn "раздел $dev: ntfsinfo не смог прочитать том — возможное повреждение NTFS ($(echo "$NI" | grep -v '^$' | head -n 1 | cut -c1-120))"; fi
   fi
   m="$MNT/$p"; mkdir -p "$m"
   if mount -t ntfs-3g -o ro "$dev" "$m" 2>>"$SEC" || mount -o ro "$dev" "$m" 2>>"$SEC"; then
