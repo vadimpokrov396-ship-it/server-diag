@@ -197,7 +197,8 @@ for (sev, prov, eid, txt), ev in allh.items():
                     print('!! ℹ️ Windows перестала работать ≈%s UTC (по часам сервера %s, пояс %s), загрузилась %s UTC — недоступна ≈%s' % (stop.strftime('%Y-%m-%d %H:%M'), lt.strftime('%H:%M'), SI.get('tz') or 'UTC%+d' % (-SI['bias'] / 60), ts[:16], ('%d мин' % max(1, round(mins))) if mins < 120 else ('%.1f ч' % (mins / 60)) if mins < 2880 else ('%.1f дн.' % (mins / 1440))))
                     continue
             print('!! ℹ️ Windows перестала работать %s %s (время сервера), следующая загрузка — %s UTC' % (m.group(2), m.group(1), ts))
-if SI.get('shutdown'): print('!! ℹ️ последнее штатное выключение Windows: %s UTC' % SI['shutdown'].strftime('%Y-%m-%d %H:%M'))
+# время штатного выключения из реестра: старое значение (за пределами окна) ничего не говорит — не показываем
+if SI.get('shutdown') and SI['shutdown'] >= SINCE: print('!! ℹ️ последнее штатное выключение Windows: %s UTC' % SI['shutdown'].strftime('%Y-%m-%d %H:%M'))
 stops = sorted({t for (sev, prov, eid, txt), ev in allh.items() if (eid in (41, 6008, 1074, 6006)) for t in (_dt(e[0]) for e in ev) if t})
 if len(stops) >= 4:
     gaps = [(b - a).total_seconds() / 60 for a, b in zip(stops, stops[1:]) if (b - a).total_seconds() > 300]
@@ -211,12 +212,21 @@ traces = []
 for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config/SAM', 'Logs/CBS/CBS.log', 'System32/winevt/Logs/System.evtx', 'System32/LogFiles'):
     try: traces.append((datetime.datetime.fromtimestamp(os.path.getmtime(os.path.join(WIN, p)), datetime.timezone.utc).replace(tzinfo=None), p))
     except OSError: pass
+# время файла журнала часто отстаёт от содержимого — берём и время последней записи в журналах
+for name, st in STATS.items():
+    t = _dt(st['last']) if st.get('last') else None
+    if t: traces.append((t, 'последнее событие в ' + name))
 if traces:
     lt, lp = max(traces)
     print('!! ℹ️ Windows в последний раз записывала на диск %s UTC (%s) — примерно тогда система работала в последний раз; если с тех пор прошли дни, сервер с тех пор не загружался в Windows или зависал' % (lt.strftime('%Y-%m-%d %H:%M'), lp))
     # Хронология: последняя загрузка → последняя запись на диск → сейчас (rescue). Нет новых загрузок и дни тишины = зависание
     lb = _dt(boots[-1]) if boots else None
     idle = (NOW - lt).total_seconds() / 86400
+    # штатная перезагрузка/выключение после последней загрузки (1074 — кто и почему)
+    planned = sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid in (1074, 6006) for e in ev if lb and _dt(e[0]) and _dt(e[0]) >= lb)
+    if lb and lt >= lb and idle < 1:
+        print('!! ℹ️ после последней активности Windows (%s UTC) новых загрузок Windows нет (последняя загрузка — %s UTC)%s. Если сервер «не загружается» — сбой в самом начале загрузки, до запуска Windows (в журналах его не видно): порядок загрузки/диск в BIOS, загрузчик, проверка диска (chkdsk) или зависание на обновлениях — посмотрите экран сервера через KVM' % (
+            lt.strftime('%Y-%m-%d %H:%M'), lb.strftime('%Y-%m-%d %H:%M'), (', перед этим Windows штатно уходила на перезагрузку/выключение в ' + planned[-1][:16] + ' UTC') if planned else ', штатного выключения перед этим не было (сброс/зависание)'))
     if lb and lt >= lb and idle >= 1:
         print('!! 🟡 Windows вероятно зависла: после последней загрузки %s UTC она работала минимум до %s UTC, затем %.1f дн. до этой диагностики ничего не записала на диск и ни разу не перезагрузилась — система висела (или сервер был выключен) с ~%s UTC. Сверьте с историей POWER/PING в панели' % (lb.strftime('%Y-%m-%d %H:%M'), lt.strftime('%Y-%m-%d %H:%M'), idle, lt.strftime('%Y-%m-%d %H:%M')))
 print('\n---- event logs read')

@@ -85,19 +85,54 @@ grep -qiE 'ddf|isw|imsm' <(lsblk -o FSTYPE 2>/dev/null) && warn "есть дис
 
 echo "Шаг 2/4: разделы Windows (только чтение)..."
 sec "NTFS partitions"
-WINROOT=""; n=0
+WINROOT=""; n=0; BOOTL=()
 for p in $(lsblk -lno NAME,FSTYPE | awk '$2=="ntfs"{print $1}'); do
   dev=/dev/$p; n=$((n+1))
   run "ntfsinfo -m $dev 2>/dev/null | grep -iE 'Volume Name|Volume Flags|Cluster Size|Volume Size'"
-  ntfsinfo -m "$dev" 2>/dev/null | grep -i 'Volume Flags' | grep -qi dirty && bad "раздел $dev помечен как «с ошибками» (dirty) — Windows хочет chkdsk"
+  NI=$(timeout 60 ntfsinfo -m "$dev" 2>&1)
+  echo "$NI" | grep -i 'Volume Flags' | grep -qi dirty && bad "раздел $dev помечен как «с ошибками» (dirty) — Windows хочет chkdsk"
+  # ntfsinfo не прочитал том — почему (незакрытый журнал после жёсткого сброса, гибернация/быстрый запуск, повреждение)
+  if ! echo "$NI" | grep -qi 'Volume Name'; then
+    echo "ntfsinfo $dev: $(echo "$NI" | grep -v '^$' | tail -n 3 | tr '\n' ' ' | cut -c1-300)" >> "$SEC"
+    if echo "$NI" | grep -qiE 'hibernat|fast restart|fast startup'; then warn "раздел $dev: Windows в гибернации/быстром запуске — том не закрыт"
+    elif echo "$NI" | grep -qiE 'unclean|journal|logfile'; then warn "раздел $dev не закрыт штатно (журнал NTFS не сброшен — после жёсткого сброса/зависания): при загрузке Windows может запустить проверку диска (chkdsk), на большом томе это долго"
+    else warn "раздел $dev: ntfsinfo не смог прочитать том — возможное повреждение NTFS ($(echo "$NI" | grep -v '^$' | tail -n 1 | cut -c1-120))"; fi
+  fi
   m="$MNT/$p"; mkdir -p "$m"
   if mount -t ntfs-3g -o ro "$dev" "$m" 2>>"$SEC" || mount -o ro "$dev" "$m" 2>>"$SEC"; then
     run "df -h $m"
     pct=$(df -P "$m" | awk 'NR==2{print int($5)}'); [ "${pct:-0}" -ge 95 ] && bad "раздел $dev заполнен на ${pct}%" || { [ "${pct:-0}" -ge 88 ] && warn "раздел $dev заполнен на ${pct}%"; }
     [ -f "$m/hiberfil.sys" ] && run "ls -la $m/hiberfil.sys"
     for w in "$m/Windows" "$m/WINDOWS"; do [ -d "$w/System32" ] && WINROOT="$w"; done
+    # загрузчик: BIOS/Legacy — bootmgr + Boot/BCD на активном разделе (обычно «System Reserved»)
+    for b in "$m/Boot/BCD" "$m/boot/BCD" "$m/BOOT/BCD"; do [ -f "$b" ] && { [ -f "$m/bootmgr" ] || [ -f "$m/BOOTMGR" ]; } && BOOTL+=("$dev bios $(date -u -r "$b" '+%F %H:%M')"); done
   else warn "раздел $dev не удалось подключить даже на чтение (повреждение или Windows в гибернации/быстром запуске)"; fi
 done
+# загрузчик UEFI — EFI-раздел (FAT32) с EFI/Microsoft/Boot/BCD
+for p in $(lsblk -lno NAME,FSTYPE | awk '$2=="vfat"{print $1}'); do
+  m="$MNT/$p"; mkdir -p "$m"
+  if mount -o ro "/dev/$p" "$m" 2>/dev/null; then
+    b=$(ls -d "$m"/[Ee][Ff][Ii]/[Mm]icrosoft/[Bb]oot/BCD 2>/dev/null | head -1)
+    [ -n "$b" ] && BOOTL+=("/dev/$p uefi $(date -u -r "$b" '+%F %H:%M')")
+  fi
+done
+sec "Boot loader"
+if [ $n -gt 0 ]; then
+  if [ ${#BOOTL[@]} -eq 0 ]; then bad "загрузчик Windows (bootmgr + BCD или EFI\\Microsoft\\Boot) не найден ни на одном разделе — сервер не может начать загрузку Windows; нужно восстановить загрузчик (bcdboot) с установочного образа"
+  else
+    for x in "${BOOTL[@]}"; do set -- $x; part=$1; mode=$2; disk=/dev/$(lsblk -no PKNAME "$part" | head -1); pt=$(lsblk -dno PTTYPE "$disk" 2>/dev/null)
+      echo "загрузчик: $part, режим $([ "$mode" = uefi ] && echo UEFI || echo 'BIOS/Legacy'), диск $disk ($pt), BCD изменён $3 $4 UTC" >> "$SEC"
+      if [ "$mode" = bios ] && [ "$pt" = dos ] && has sfdisk && ! sfdisk -d "$disk" 2>/dev/null | grep -F "$part" | grep -q bootable; then
+        bad "раздел с загрузчиком $part не помечен активным (bootable) — BIOS не начнёт загрузку с этого диска"
+      fi
+      [ "$mode" = bios ] && [ "$pt" = gpt ] && warn "загрузчик BIOS/Legacy на диске с разметкой GPT ($disk) — загрузка возможна только в режиме UEFI; проверьте режим загрузки"
+    done
+    nd=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vcE '^(loop|zram|sr|ram)')
+    set -- ${BOOTL[0]}; bd=/dev/$(lsblk -no PKNAME "$1" | head -1)
+    [ "$nd" -gt 1 ] && note "Windows загружается с диска $bd ($(lsblk -dno MODEL,SERIAL "$bd" | xargs)), режим $([ "$2" = uefi ] && echo UEFI || echo 'BIOS/Legacy') — если Windows «не загружается», проверьте в BIOS/KVM, что первым в порядке загрузки стоит именно этот диск, а не второй"
+  fi
+  run "for d in \$(lsblk -dno NAME,TYPE | awk '\$2==\"disk\"{print \$1}' | grep -vE '^(loop|zram|sr|ram)'); do echo \"/dev/\$d: \$(lsblk -dno PTTYPE /dev/\$d)\"; sfdisk -d /dev/\$d 2>/dev/null | grep -E 'bootable|type=' | head -6; done"
+fi
 [ $n = 0 ] && bad "разделов NTFS не найдено — диск Windows не виден (умер диск, RAID-контроллер или BitLocker)"
 lsblk -lno FSTYPE | grep -qi bitlocker && warn "есть тома BitLocker — без ключа восстановления их содержимое не прочитать"
 [ -n "$n" ] && [ $n -gt 0 ] && [ -z "$WINROOT" ] && bad "папка Windows не найдена ни на одном разделе"
