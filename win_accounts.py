@@ -169,7 +169,7 @@ def main():
     active = [u for u in users if not u['disabled']]
     for u in users:
         det.append('   %-22s RID %-5d %s создана %s · пароль изменён %s · последний вход %s · последний неверный пароль %s · неудачных подряд %d · входов %d%s' % (
-            u['name'][:22], u['rid'], 'ОТКЛЮЧЕНА ' if u['disabled'] else '', fmt(u['created']), fmt(u['pwd_set']), fmt(u['last_logon']), fmt(u['last_bad']), u['bad_count'], u['logons'], ' · БЕЗ ПАРОЛЯ' if u['no_pwd'] else ''))
+            u['name'][:22], u['rid'], 'ОТКЛЮЧЕНА ' if u['disabled'] else '', fmt(u['created']), fmt(u['pwd_set']), fmt(u['last_logon']), fmt(u['last_bad']), u['bad_count'], u['logons'], ' · флаг «пароль не обязателен» (PASSWD_NOTREQD)' if u['no_pwd'] else ''))
     # Security: кто менял пароли, входы, перебор
     ev, st = {}, None
     sec = os.path.join(win, 'System32', 'winevt', 'Logs', 'Security.evtx')
