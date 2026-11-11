@@ -45,6 +45,7 @@ RULES = {
     ('EventLog', 6006): ('info', 'журнал событий остановлен (выключение)'),
 }
 rx_prov = re.compile(r'<Provider Name="([^"]+)"'); rx_id = re.compile(r'<EventID[^>]*>(\d+)</EventID>')
+rx_level = re.compile(r'<Level>(\d)</Level>')
 rx_time = re.compile(r'<TimeCreated SystemTime="([^"]+)"'); rx_data = re.compile(r'<Data(?: Name="([^"]*)")?>([^<]*)</Data>')
 
 
@@ -57,6 +58,8 @@ def clean(v):
 
 
 STATS = {}
+ALLEV = []   # (ts, provider, id) — все события окна: по ним видно, когда система в последний раз «подавала признаки жизни» перед сбоем
+TL = []      # (ts, level, provider, id, data) — критические/ошибки/предупреждения окна: что происходило перед сбоем
 
 
 def scan(path):
@@ -77,6 +80,11 @@ def scan(path):
                 m = rx_id.search(x); p = rx_prov.search(x)
                 if not m or not p: continue
                 eid = int(m.group(1)); prov = p.group(1)
+                if t0 and ts0 >= SINCE.strftime('%Y-%m-%d %H:%M:%S'):
+                    if st is STATS.get('System.evtx'): ALLEV.append((ts0, prov, eid))
+                    lv = rx_level.search(x)
+                    if lv and lv.group(1) in '123' and len(TL) < 400000:
+                        TL.append((ts0, int(lv.group(1)), prov, eid, ' | '.join((n + '=' if n else '') + clean(v) for n, v in rx_data.findall(x) if clean(v))[:160]))
                 for (ps, rid), (sev, txt) in RULES.items():
                     if rid == eid and ps.lower() in prov.lower():
                         if (ps, rid) == ('Ntfs', 98):   # 28/10: Win11/2025 log «volume is healthy» as 98 with Level 4 -> only warnings/errors count
@@ -110,6 +118,10 @@ for name, st in STATS.items():
         try:
             last = datetime.datetime.strptime(st['last'], '%Y-%m-%d %H:%M:%S')
             age = (NOW - last).days
+            ahead = (last - NOW).total_seconds() / 3600
+            if ahead > 0.25:
+                # события «из будущего»: часы Windows сбиты (часто — после rescue: Linux пишет в аппаратные часы UTC, а Windows читает их как местное время)
+                print('!! ℹ️ часы Windows спешат примерно на %.1f ч: последнее событие в журнале — %s UTC, а сейчас %s UTC. Время последних событий Windows в этом отчёте сдвинуто (верить можно числу сбоев и интервалам между ними, но не точному времени)' % (ahead, st['last'], NOW.strftime('%Y-%m-%d %H:%M')))
             if age >= 3:
                 # Windows при этом работала? Реестр (config) и CBS.log пишутся, пока система запущена
                 alive = []
@@ -207,6 +219,54 @@ if len(stops) >= 4:
         near = sum(1 for g in gaps if abs(g - med) <= max(10, med * 0.15))
         if near >= max(3, len(gaps) * 0.6):
             print('!! 🔴 выключения идут ПО РАСПИСАНИЮ: примерно каждые %d мин (%d из %d интервалов). Ищи причину-«таймер»: лицензия (WLMS), задача в Планировщике, политика/скрипт, ИБП/BIOS, хостер.' % (round(med), near, len(gaps)))
+# ---- что было перед каждым внезапным сбоем: сколько система проработала и какие ошибки/предупреждения шли в последние минуты
+def fmt_up(sec):
+    sec = int(max(0, sec))
+    return '%d с' % sec if sec < 60 else '%d мин' % (sec // 60) if sec < 3600 else '%d ч %02d мин' % (sec // 3600, sec % 3600 // 60) if sec < 86400 else '%.1f дн.' % (sec / 86400)
+def crash_context(allev, tl, boots, crashes, before=600, bootnoise=120):
+    """allev: [(ts, prov, id)] событий System; tl: [(ts, level, prov, id, data)] ошибок; boots/crashes: метки времени 'YYYY-MM-DD HH:MM:SS'.
+    Для каждого сбоя: загрузка, после которой он записан → последнее событие предыдущего сеанса (≈ момент остановки) → время работы сеанса → ошибки за последние минуты."""
+    import bisect
+    allts = sorted(e[0] for e in allev); tl = sorted(tl); tlts = [e[0] for e in tl]; boots = sorted(boots); out = []
+    for c in sorted(set(crashes)):
+        cd = _dt(c)
+        if not cd: continue
+        # загрузка, в которой записан сбой: «загрузка системы» идёт за пару секунд до Kernel-Power 41
+        bs = [b for b in boots if _dt(b) and -5 <= (cd - _dt(b)).total_seconds() <= 300]
+        b = bs[-1] if bs else c
+        i = bisect.bisect_left(allts, b)
+        if i == 0: continue                      # начало журнала — предыдущего сеанса не видно
+        stop = allts[i - 1]; sd = _dt(stop)
+        prev = [x for x in boots if x < b and x <= stop]
+        up = (sd - _dt(prev[-1])).total_seconds() if prev else None
+        lo = sd - datetime.timedelta(seconds=before)
+        if prev: lo = max(lo, _dt(prev[-1]) + datetime.timedelta(seconds=bootnoise))   # первые 2 минуты после загрузки — обычный шум запуска служб
+        ev = [e for e in tl[bisect.bisect_left(tlts, lo.strftime('%Y-%m-%d %H:%M:%S')):bisect.bisect_right(tlts, stop)] if not (e[3] in (41, 6008) or 'Kernel-Power' in e[2] and e[3] == 41)]
+        lastany = [e for e in sorted(allev) if e[0] <= stop][-4:] if len(allev) < 200000 else []
+        out.append({'crash': c, 'boot': b, 'stop': stop, 'up': up, 'down': (_dt(b) - sd).total_seconds(), 'ev': ev, 'last': lastany})
+    return out
+LVL = {1: 'критическая', 2: 'ошибка', 3: 'предупреждение'}
+crash_ts = sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid == 41 and 'kernel-power' in prov.lower() for e in ev) or sorted(e[0] for (sev, prov, eid, txt), ev in allh.items() if eid == 6008 for e in ev)
+CTX = []
+try: CTX = crash_context(ALLEV, TL, boots, crash_ts)
+except Exception as e: print('   (разбор событий перед сбоями не удался: %s)' % e)
+if CTX:
+    ups = [c['up'] for c in CTX if c['up'] is not None]
+    if ups:
+        early = sum(1 for u in ups if u < 900)
+        print('!! ℹ️ сколько Windows проработала до каждого внезапного сбоя (по порядку%s): %s%s' % (', последние 12' if len(ups) > 12 else '', ', '.join(fmt_up(u) for u in ups[-12:]),
+            (' — %d из %d сбоев случились в первые 15 минут после загрузки: система падает почти сразу после запуска (железо не держит нагрузку либо драйвер/программа из автозапуска) — нужен тест под нагрузкой и проверка автозапуска' % (early, len(ups))) if early >= 3 and early * 2 >= len(ups) else ''))
+    # одно и то же событие перед несколькими сбоями — главный кандидат в причины
+    usable = [c for c in CTX if c['up'] is None or c['up'] > 180]
+    seen = collections.Counter(); sample = {}
+    for c in usable:
+        for k in {(e[2], e[3], e[1]) for e in c['ev']}: seen[k] += 1
+        for e in c['ev']: sample[(e[2], e[3], e[1])] = e[4]
+    rep = [(k, n) for k, n in seen.most_common() if n >= 2 and n * 2 >= len(usable)]
+    for (prov, eid, lvl), n in rep[:4]:
+        print('!! 🟡 перед внезапными перезагрузками повторяется одно и то же событие: %s / %d (%s) — перед %d из %d сбоев, в последние 10 минут до остановки%s' % (prov, eid, LVL.get(lvl, lvl), n, len(usable), (': ' + sample[(prov, eid, lvl)][:140]) if sample.get((prov, eid, lvl)) else ''))
+    if usable and not rep and len(usable) >= 2 and all(not c['ev'] for c in usable):
+        print('!! ℹ️ перед внезапными сбоями в журналах нет ни ошибок, ни предупреждений (последние 10 минут до остановки, %d сбоев): Windows не успевала ничего записать — так выглядит мгновенный сброс/пропадание питания или полное зависание, а не программная ошибка' % len(usable))
 # Когда Windows в последний раз что-то писала на диск — реестр и CBS.log меняются, пока система работает
 traces = []
 for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config/SAM', 'Logs/CBS/CBS.log', 'System32/winevt/Logs/System.evtx', 'System32/LogFiles'):
@@ -232,6 +292,14 @@ if traces:
 print('\n---- event logs read')
 for t, p in sorted(traces, reverse=True): print('   изменён %s UTC  %s' % (t.strftime('%Y-%m-%d %H:%M'), p))
 for name, st in STATS.items(): print('   %s: записей %d, ошибок разбора %d, в окне %d дн.: %d, события с %s по %s UTC' % (name, st['n'], st['bad'], DAYS, st['win'], st['first'] or '—', st['last'] or '—'))
+if CTX:
+    print('\n---- before each unexpected stop (last 6): uptime and warnings/errors in the last 10 minutes')
+    for c in CTX[-6:]:
+        print('\n   сбой: последняя запись %s UTC → загрузка %s UTC (простой %s)%s' % (c['stop'], c['boot'], fmt_up(c['down']), (', проработала ' + fmt_up(c['up'])) if c['up'] is not None else ''))
+        if c['up'] is not None and c['up'] <= 180: print('      сеанс короче 3 минут — события запуска не показываю')
+        elif not c['ev']: print('      ошибок и предупреждений за последние 10 минут нет')
+        for e in c['ev'][-10:]: print('      %s  [%s] %s / %d  %s' % (e[0][11:], LVL.get(e[1], e[1]), e[2], e[3], e[4]))
+        if c['last']: print('      последние записи журнала System: ' + '; '.join('%s %s/%d' % (e[0][11:], e[1].replace('Microsoft-Windows-', ''), e[2]) for e in c['last']))
 print('\n---- details (last 8 of each)')
 for (sev, prov, eid, txt), ev in items:
     print('\n[%s] %s / %d — %s — %d' % (sev, prov, eid, txt, len(ev)))

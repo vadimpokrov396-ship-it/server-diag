@@ -168,17 +168,35 @@ if [ -n "$ROOT" ]; then
   elif [ ! -d "$ROOT/var/log/journal" ]; then note "постоянного журнала systemd нет (/var/log/journal) — проверены только kern.log/syslog"; fi
   if [ -n "$J" ]; then
     # аварийные выключения: загрузка, в конце которой нет штатного завершения. Последняя загрузка оборвана нашей перезагрузкой в rescue — не считаем.
-    BOOTS=$($J --list-boots 2>/dev/null | awk '$1 ~ /^-?[0-9]+$/{print $1}' | tail -n 15); last=$(echo "$BOOTS" | tail -1); unc=0; ul=""; rec=0; rl=""
+    BOOTS=$($J --list-boots 2>/dev/null | awk '$1 ~ /^-?[0-9]+$/{print $1}' | tail -n 15); last=$(echo "$BOOTS" | tail -1); unc=0; ul=""; rec=0; rl=""; ub=""; upl=""; early=0
     for b in $BOOTS; do [ "$b" = "$last" ] && continue
       t=$($J -b "$b" -n 40 -o short-iso 2>/dev/null)
       if ! echo "$t" | grep -qiE 'systemd-shutdown|Reached target .*(Power-Off|Reboot|Shutdown|Halt)|reboot: (Restarting|Power down)|Journal stopped|System is (rebooting|powering down)'; then
         end=$(echo "$t" | tail -1 | cut -c1-19); ets=$(date -d "$end" +%s 2>/dev/null || echo 0)
         # обрывы за последние 6 часов — почти всегда наши же Force restart при включении rescue/диагностике
-        if [ "$ets" -gt "$(date -d '-6 hours' +%s)" ]; then rec=$((rec+1)); rl="$rl ${end:0:16}"; else unc=$((unc+1)); ul="$ul ${end:0:16}"; fi
+        if [ "$ets" -gt "$(date -d '-6 hours' +%s)" ]; then rec=$((rec+1)); rl="$rl ${end:0:16}"; else unc=$((unc+1)); ul="$ul ${end:0:16}"; ub="$ub $b"
+          # сколько система проработала до обрыва
+          st=$($J -b "$b" -o short-iso 2>/dev/null | head -n 1 | cut -c1-19); sts=$(date -d "$st" +%s 2>/dev/null || echo 0)
+          [ "$sts" -gt 0 ] && [ "$ets" -ge "$sts" ] && { u=$((ets - sts)); upl="$upl $(if [ $u -lt 3600 ]; then echo "$((u/60))мин"; elif [ $u -lt 86400 ]; then echo "$((u/3600))ч$((u%3600/60))мин"; else echo "$((u/86400))дн"; fi)"; [ $u -lt 900 ] && early=$((early+1)); }
+        fi
       fi
     done
     [ $unc -gt 0 ] && warn "сервер выключался аварийно (без штатного завершения): $unc раз —$ul"
+    [ -n "$upl" ] && note "сколько система проработала до каждого аварийного выключения (по порядку):$upl$([ ${early:-0} -ge 3 ] && echo " — $early раз(а) в первые 15 минут после загрузки: система падает почти сразу после запуска (железо не держит нагрузку либо служба/драйвер из автозапуска) — нужен тест под нагрузкой")"
     [ ${rec:-0} -gt 0 ] && note "ещё $rec обрыв(а) загрузки за последние 6 часов —$rl (скорее всего, принудительные перезагрузки при включении rescue/диагностике)"
+    # что было перед каждым аварийным выключением: предупреждения/ошибки и последние строки журнала (до 5 последних обрывов)
+    if [ -n "$ub" ]; then
+      sec "Before each unclean shutdown (last 5): warnings/errors and the last lines of that boot"
+      for b in $(echo $ub | tr ' ' '\n' | tail -n 5); do
+        echo "--- загрузка $b: предупреждения и ошибки перед обрывом" >> "$SEC"
+        $J -b "$b" -p warning -n 15 -o short-iso 2>/dev/null | cut -c1-300 >> "$SEC"
+        echo "--- загрузка $b: последние строки журнала" >> "$SEC"
+        $J -b "$b" -n 12 -o short-iso 2>/dev/null | cut -c1-300 >> "$SEC"
+      done
+      # одно и то же сообщение перед несколькими обрывами — главный кандидат в причины
+      rp=$(for b in $(echo $ub | tr ' ' '\n' | tail -n 8); do $J -b "$b" -p warning -n 15 -o cat 2>/dev/null | sed -E 's/[0-9]+/N/g' | cut -c1-90 | sort -u; done | sort | uniq -c | sort -rn | awk -v n="$(echo $ub | wc -w)" '$1>=2 && $1*2>=(n>8?8:n){c=$1; $1=""; print c " раз:" $0; exit}')
+      [ -n "$rp" ] && warn "перед аварийными выключениями повторяется одно и то же сообщение (кандидат в причины) — $rp"
+    fi
     if [ -n "$last" ]; then
       sec "Last 60 lines before the restart into rescue (the last boot was interrupted by that restart)"
       run "$J -b $last -n 60 -o short-iso"
