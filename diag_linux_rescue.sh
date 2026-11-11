@@ -20,8 +20,8 @@ has(){ command -v "$1" >/dev/null 2>&1; }
 pvsummary(){ local os="$1" d i a v
   echo "===PVSUMMARY==="
   echo "os=$os cpu=\"$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)\" threads=$(nproc) ram_gb=$(free -g | awk '/Mem:/{print $2}')"
-  echo "nvme_pci=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ) nvme_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .) disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vE '^(loop|zram|sr|ram)' | grep -c .)"
-  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  echo "nvme_pci=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ) nvme_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .) disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)' | grep -c .)"
+  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
     i=$(smartctl -i /dev/$d 2>/dev/null); a=$(smartctl -H -A /dev/$d 2>/dev/null)
     f(){ printf "%s\n%s\n" "$i" "$a" | awk -F: -v k="$1" '$1 ~ "^"k"$" {sub(/^[ \t]+/,"",$2); for(j=3;j<=NF;j++) $2=$2":"$j; print $2; exit}'; }
     at(){ echo "$a" | awk -v n="$1" '$2==n{print $10; exit}' | grep -oE '^[0-9]+'; }
@@ -49,7 +49,7 @@ echo "Шаг 1/4: диски, SMART, RAID..."
 sec "Disks"
 run "lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MODEL,SERIAL"
 if has smartctl; then
-  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
     run "smartctl -H -A /dev/$d"
     smartctl -H /dev/$d 2>/dev/null | grep -qiE 'FAILED|FAILING' && bad "диск /dev/$d: SMART сообщает о неисправности"
     a=$(smartctl -A /dev/$d 2>/dev/null)
@@ -80,7 +80,7 @@ DN=$(dmesg 2>/dev/null | grep -aiE 'nvme[0-9]+: .*(disable controller|controller
 [ -n "$DN" ] && { echo "$DN" >> "$SEC"; for k in $(echo "$DN" | grep -oE 'nvme[0-9]+' | sort -u); do bad "контроллер $k отключён ядром после ошибки: $(echo "$DN" | grep "$k" | tail -1 | sed -E 's/^\[[^]]*\] *//' | cut -c1-120)"; done; }
 run "dmesg 2>/dev/null | grep -aiE 'nvme|ata[0-9]+[.:]' | head -n 40"
 # диски без разделов
-for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
   [ "$(lsblk -no NAME "/dev/$d" | wc -l)" -le 1 ] && [ -z "$(lsblk -dno FSTYPE "/dev/$d")" ] && note "диск /dev/$d без разделов (пустой, или система была на другом диске, или таблица разделов повреждена)"
 done
 
@@ -155,6 +155,17 @@ if [ -n "$ROOT" ]; then
   chk warn "зависания ядра (soft lockup, RCU stall, hung task)" 'soft lockup|hard LOCKUP|rcu_(sched|preempt|bh) (self-)?detected stall|rcu: INFO: .*stall|blocked for more than [0-9]+ seconds'
   chk warn "перегрев процессора" 'temperature above threshold|cpu clock throttled|Package temperature above'
   chk warn "программы падали с ошибкой памяти (segfault)" 'segfault at|traps: .*(general protection|invalid opcode)'
+  # одна и та же проверенная программа падает по-разному и на разных ядрах — так выглядит нестабильная память или процессор, а не ошибка программы
+  SG=$(grep -aE 'segfault at|traps: .*(general protection|invalid opcode)' "$KL" | tail -n 200)
+  if [ -n "$SG" ]; then
+    sgn=$(echo "$SG" | grep -c .); sgc=$(echo "$SG" | grep -oE '\(core [0-9]+' | sort -u | grep -c .)
+    sgp=$(echo "$SG" | sed -E 's/.*kernel: (traps: )?//; s/\[[0-9]+\].*//' | sort | uniq -c | sort -rn | awk '{c=$1; $1=""; printf "%s —%s, ", c, $0}' | sed 's/, $//')
+    sgk=$(echo "$SG" | grep -oE 'segfault|general protection|invalid opcode' | sort -u | grep -c .); sgq=$(echo "$SG" | sed -E 's/.*kernel: (traps: )?//; s/\[[0-9]+\].*//' | sort -u | grep -c .)
+    echo "падения программ: всего $sgn, разных ядер CPU $sgc, по программам: $sgp" >> "$SEC"
+    if [ "$sgn" -ge 3 ] && { [ "$sgc" -ge 2 ] || [ "$sgk" -ge 2 ]; } && { [ "$sgq" -ge 2 ] || [ "$sgk" -ge 2 ]; }; then
+      warn "программы падают в случайных местах: $sgn падений ($sgp)$([ "$sgc" -ge 2 ] && echo " на $sgc разных ядрах процессора")$([ "$sgk" -ge 2 ] && echo ", с разными ошибками (segfault / invalid opcode / general protection)") — так выглядит нестабильная память или процессор, а не ошибка самой программы; нужен тест под нагрузкой с проверкой памяти"
+    fi
+  fi
   # сохранённые отчёты о падении ядра (kdump / pstore)
   cr=$(ls -d "$ROOT"/var/crash/*/ "$ROOT"/var/lib/systemd/pstore/* 2>/dev/null | head -5)
   [ -n "$cr" ] && { bad "есть сохранённые отчёты о падении ядра (kdump/pstore): $(echo "$cr" | wc -l)"; run "ls -la $ROOT/var/crash $ROOT/var/lib/systemd/pstore 2>/dev/null | head -20"; }
@@ -210,7 +221,11 @@ if [ -n "$ROOT" ]; then
   sec "Accounts, password changes and logins"
   NOWD=$(( $(date +%s) / 86400 ))
   if [ -r "$ROOT/etc/shadow" ]; then
-    SHT=$(date -u -r "$ROOT/etc/shadow" '+%F %H:%M')
+    SHT=$(date -u -r "$ROOT/etc/shadow" '+%F %H:%M'); SHM=$(stat -c %Y "$ROOT/etc/shadow")
+    # когда систему установили: ключи узла SSH создаются при первом запуске установленной системы
+    INST=$(stat -c %Y "$ROOT"/etc/ssh/ssh_host_*_key 2>/dev/null | sort -n | head -1)
+    [ -n "$INST" ] && echo "система установлена $(date -u -d "@$INST" '+%F %H:%M') UTC (по ключам узла SSH)" >> "$SEC"
+    fresh(){ [ -n "$INST" ] && [ "$1" -ge $((INST - 3600)) ] && [ "$1" -le $((INST + 3600)) ]; }
     echo "/etc/shadow изменён $SHT UTC (время последней смены какого-либо пароля)" >> "$SEC"
     while IFS=: read -r u h lc _; do
       case "$h" in '$'*) ;; *) continue;; esac          # только учётки с настоящим паролем (не * / !)
@@ -218,7 +233,8 @@ if [ -n "$ROOT" ]; then
       d=$(date -u -d "@$((lc * 86400))" +%F); age=$((NOWD - lc))
       echo "пароль $u: последняя смена $d ($age дн. назад)" >> "$SEC"
       if [ "$u" = root ]; then
-        if [ $age -le "$DAYS" ]; then warn "пароль пользователя root менялся $d ($age дн. назад; /etc/shadow последний раз изменён $SHT UTC)"; else note "пароль пользователя root не менялся с $d"; fi
+        if [ $age -le "$DAYS" ] && fresh "$SHM"; then note "пароль root задан при установке системы ($SHT UTC) и с тех пор не менялся"
+        elif [ $age -le "$DAYS" ]; then warn "пароль пользователя root менялся $d ($age дн. назад; /etc/shadow последний раз изменён $SHT UTC)"; else note "пароль пользователя root не менялся с $d"; fi
       elif [ $age -le "$DAYS" ]; then warn "пароль пользователя $u менялся $d ($age дн. назад)"; fi
     done < "$ROOT/etc/shadow"
   fi
@@ -229,6 +245,7 @@ if [ -n "$ROOT" ]; then
     [ -f "$k" ] || continue
     m=$(stat -c %Y "$k"); n=$(grep -cE '^[^#]*(ssh-|ecdsa-|sk-)' "$k"); kt=$(date -u -d "@$m" '+%F %H:%M')
     echo "${k#$ROOT}: ключей $n, изменён $kt UTC" >> "$SEC"
+    if type fresh >/dev/null 2>&1 && fresh "$m"; then echo "   (создан при установке системы — не считаем изменением)" >> "$SEC"; continue; fi
     [ $(( ($(date +%s) - m) / 86400 )) -le "$DAYS" ] && warn "ключи SSH ${k#$ROOT} изменены $kt UTC (ключей: $n) — если клиент их не добавлял, это вход в обход пароля"
   done
   AL=$(mktemp)
@@ -260,7 +277,7 @@ fi
 
 # Полные SMART-логи каждого диска (smartctl -x) — для поля «Entire SMART log» в заявке дата-центру
 sec "SMART full logs (smartctl -x)"
-if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
   { echo "===SMART-FULL /dev/$d==="; timeout 90 smartctl -x /dev/$d 2>&1 | head -n 400; echo "===SMART-END==="; } >> "$SEC"; done; fi
 
 { echo "ДИАГНОСТИКА LINUX (из rescue) $(hostname) — $(date '+%F %T %Z')"

@@ -19,8 +19,8 @@ has(){ command -v "$1" >/dev/null 2>&1; }
 pvsummary(){ local os="$1" d i a v
   echo "===PVSUMMARY==="
   echo "os=$os cpu=\"$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)\" threads=$(nproc) ram_gb=$(free -g | awk '/Mem:/{print $2}')"
-  echo "nvme_pci=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ) nvme_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .) disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vE '^(loop|zram|sr|ram)' | grep -c .)"
-  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  echo "nvme_pci=$( (lspci -d ::0108 2>/dev/null || lspci 2>/dev/null | grep -i 'non-volatile') | grep -c . ) nvme_disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk" && $1 ~ /^nvme/' | grep -c .) disks=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)' | grep -c .)"
+  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
     i=$(smartctl -i /dev/$d 2>/dev/null); a=$(smartctl -H -A /dev/$d 2>/dev/null)
     f(){ printf "%s\n%s\n" "$i" "$a" | awk -F: -v k="$1" '$1 ~ "^"k"$" {sub(/^[ \t]+/,"",$2); for(j=3;j<=NF;j++) $2=$2":"$j; print $2; exit}'; }
     at(){ echo "$a" | awk -v n="$1" '$2==n{print $10; exit}' | grep -oE '^[0-9]+'; }
@@ -50,7 +50,7 @@ echo "Шаг 1/4: диски и SMART..."
 sec "Disks"
 run "lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MODEL,SERIAL"
 if has smartctl; then
-  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+  for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
     run "smartctl -H -A /dev/$d"
     smartctl -H /dev/$d 2>/dev/null | grep -qiE 'FAILED|FAILING' && bad "диск /dev/$d: SMART сообщает о неисправности"
     a=$(smartctl -A /dev/$d 2>/dev/null)
@@ -76,7 +76,7 @@ DN=$(dmesg 2>/dev/null | grep -aiE 'nvme[0-9]+: .*(disable controller|controller
 [ -n "$DN" ] && { echo "$DN" >> "$SEC"; for k in $(echo "$DN" | grep -oE 'nvme[0-9]+' | sort -u); do bad "контроллер $k отключён ядром после ошибки: $(echo "$DN" | grep "$k" | tail -1 | sed -E 's/^\[[^]]*\] *//' | cut -c1-120)"; done; }
 run "dmesg 2>/dev/null | grep -aiE 'nvme|ata[0-9]+[.:]' | head -n 40"
 # диски без разделов
-for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
   [ "$(lsblk -no NAME "/dev/$d" | wc -l)" -le 1 ] && [ -z "$(lsblk -dno FSTYPE "/dev/$d")" ] && note "диск /dev/$d без разделов (пустой, или система была на другом диске, или таблица разделов повреждена)"
 done
 [ -r /proc/mdstat ] && grep -q '^md' /proc/mdstat && { run "cat /proc/mdstat"; grep -qE '\[[U_]*_[U_]*\]' /proc/mdstat && bad "программный RAID деградировал"; }
@@ -130,11 +130,11 @@ if [ $n -gt 0 ]; then
       fi
       [ "$mode" = bios ] && [ "$pt" = gpt ] && warn "загрузчик BIOS/Legacy на диске с разметкой GPT ($disk) — загрузка возможна только в режиме UEFI; проверьте режим загрузки"
     done
-    nd=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vcE '^(loop|zram|sr|ram)')
+    nd=$(lsblk -dno NAME,TYPE | awk '$2=="disk"' | grep -vcE '^(loop|zram|sr|ram|nbd|rbd)')
     set -- ${BOOTL[0]}; bd=/dev/$(lsblk -no PKNAME "$1" | head -1)
     [ "$nd" -gt 1 ] && note "Windows загружается с диска $bd ($(lsblk -dno MODEL,SERIAL "$bd" | xargs)), режим $([ "$2" = uefi ] && echo UEFI || echo 'BIOS/Legacy') — если Windows «не загружается», проверьте в BIOS/KVM, что первым в порядке загрузки стоит именно этот диск, а не второй"
   fi
-  run "for d in \$(lsblk -dno NAME,TYPE | awk '\$2==\"disk\"{print \$1}' | grep -vE '^(loop|zram|sr|ram)'); do echo \"/dev/\$d: \$(lsblk -dno PTTYPE /dev/\$d)\"; sfdisk -d /dev/\$d 2>/dev/null | grep -E 'bootable|type=' | head -6; done"
+  run "for d in \$(lsblk -dno NAME,TYPE | awk '\$2==\"disk\"{print \$1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do echo \"/dev/\$d: \$(lsblk -dno PTTYPE /dev/\$d)\"; sfdisk -d /dev/\$d 2>/dev/null | grep -E 'bootable|type=' | head -6; done"
 fi
 [ $n = 0 ] && bad "разделов NTFS не найдено — диск Windows не виден (умер диск, RAID-контроллер или BitLocker)"
 lsblk -lno FSTYPE | grep -qi bitlocker && warn "есть тома BitLocker — без ключа восстановления их содержимое не прочитать"
@@ -180,7 +180,7 @@ fi
 
 # Полные SMART-логи каждого диска (smartctl -x) — для поля «Entire SMART log» в заявке дата-центру
 sec "SMART full logs (smartctl -x)"
-if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram)'); do
+if has smartctl; then for d in $(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE '^(loop|zram|sr|ram|nbd|rbd)'); do
   { echo "===SMART-FULL /dev/$d==="; timeout 90 smartctl -x /dev/$d 2>&1 | head -n 400; echo "===SMART-END==="; } >> "$SEC"; done; fi
 
 { echo "ДИАГНОСТИКА WINDOWS (из rescue) $(hostname) — $(date '+%F %T %Z')"
