@@ -27,30 +27,41 @@ echo "Тест под нагрузкой: $CPU, $CORES потоков, ${RAM} Г
 PIDS=()
 SLOG=$(mktemp)
 # --verify: память не просто нагружается, а проверяется — записанное сверяется с прочитанным (битая планка RAM даёт ошибки)
-if has stress-ng; then stress-ng --cpu 0 --vm 2 --vm-bytes 60% --verify --timeout "${DUR}s" >"$SLOG" 2>&1 & PIDS+=($!); TOOL="stress-ng (все ядра + 60% RAM с проверкой содержимого)"
+# setsid: нагрузка в отдельном сеансе, чтобы Ctrl+C в терминале (в PuTTY им часто пытаются «скопировать») не убивал её
+SS=""; has setsid && SS=setsid
+if has stress-ng; then $SS stress-ng --cpu 0 --vm 2 --vm-bytes 60% --verify --timeout "${DUR}s" >"$SLOG" 2>&1 & PIDS+=($!); TOOL="stress-ng (все ядра + 60% RAM с проверкой содержимого)"
 else for i in $(seq "$CORES"); do ( while :; do :; done ) & PIDS+=($!); done; TOOL="встроенная нагрузка на все ядра (stress-ng не установился)"; fi
 stopload(){ for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; pkill -f 'stress-ng' 2>/dev/null; }
-trap 'stopload' EXIT INT TERM
+# Ctrl+C: первое нажатие — только предупреждение, тест идёт дальше; второе в течение 5 с — прервать и показать неполный отчёт
+LASTINT=0
+onint(){ local n; n=$(date +%s); if [ $((n - LASTINT)) -le 5 ]; then REASON=interrupted; else LASTINT=$n; echo; echo "⚠ Ctrl+C: тест продолжается. Чтобы скопировать текст в PuTTY, просто выделите его мышью — Ctrl+C не нужен. Чтобы прервать тест, нажмите Ctrl+C ещё раз в течение 5 секунд."; fi; }
+trap 'stopload' EXIT TERM HUP; trap onint INT
 
 T0=$(date +%s); PEAK=0; PEAKAT=0; REASON=time; SAMPLES=""
 while :; do
   sleep "$STEP"; EL=$(( $(date +%s) - T0 )); M=$(tmax)
+  [ "$REASON" = interrupted ] && break
+  # нагрузка исчезла раньше времени (stress-ng упал или его убили) — дальше мерить нечего
+  if has stress-ng && [ "$EL" -lt $((DUR - STEP)) ] && ! pgrep -x stress-ng >/dev/null 2>&1; then REASON=load_died; echo "⚠ нагрузка остановилась раньше времени (stress-ng завершился) — заканчиваю тест"; break; fi
   [ "$M" -gt "$PEAK" ] && { PEAK=$M; PEAKAT=$EL; }
   L="$(date +%T)  +$((EL/60))м$(printf '%02d' $((EL%60)))с  max=${M}°C  $(mhz)МГц  $(temps)"
   echo "$L"; SAMPLES+="$L"$'\n'
   if [ "$M" -ge "$STOP" ]; then REASON=overheat; break; fi
   [ "$EL" -ge "$DUR" ] && break
 done
-stopload; trap - EXIT INT TERM
+stopload; trap - EXIT INT TERM HUP
 echo "Нагрузка снята, жду 30 с — смотрю, как остывает…"; sleep 30; COOL=$(tmax); E1=$(hwerr)
 MEMERR=$(grep -aciE 'verif.*(fail|error)|memory error|miscompare|unexpected value|fail:' "$SLOG" 2>/dev/null); MEMERR=${MEMERR:-0}
 
 ISSUES=()
+[ "$REASON" = interrupted ] && ISSUES+=("🟡 тест прерван оператором (Ctrl+C) через $((EL/60)) мин $((EL%60)) с из $((DUR/60)) мин — результат неполный, повторите тест целиком")
+[ "$REASON" = load_died ] && ISSUES+=("🟡 нагрузка остановилась сама через $((EL/60)) мин $((EL%60)) с из $((DUR/60)) мин (stress-ng завершился раньше времени: $(tail -n 2 "$SLOG" 2>/dev/null | tr '\n' ' ' | cut -c1-160)) — результат неполный, повторите тест")
 if [ "$PEAK" = 0 ]; then ISSUES+=("🟡 датчики температуры CPU недоступны — тест показал только, что сервер не выключился за $((EL/60)) мин")
 elif [ "$REASON" = overheat ]; then ISSUES+=("🔴 перегрев CPU: ${PEAK} °C через $((PEAKAT/60)) мин $((PEAKAT%60)) с под нагрузкой (без нагрузки было ${IDLE} °C) — тест остановлен на пороге ${STOP} °C; обычный предел для серверных CPU — 90–95 °C. Похоже на неисправность охлаждения (кулер, вентилятор, термопаста)")
 elif [ "$PEAK" -ge 95 ]; then ISSUES+=("🔴 CPU очень горячий: до ${PEAK} °C за $((EL/60)) мин под нагрузкой — охлаждение на пределе")
 elif [ "$PEAK" -ge 90 ]; then ISSUES+=("🟡 CPU горячий: до ${PEAK} °C за $((EL/60)) мин под нагрузкой (на пределе нормы)")
-else ISSUES+=("✅ $((EL/60)) мин под полной нагрузкой без отключения, максимум ${PEAK} °C — охлаждение справляется"); fi
+elif [ "$REASON" = time ]; then ISSUES+=("✅ $((EL/60)) мин под полной нагрузкой без отключения, максимум ${PEAK} °C — охлаждение справляется")
+else ISSUES+=("ℹ️ за $((EL/60)) мин $((EL%60)) с под нагрузкой максимум ${PEAK} °C, сервер не отключался"); fi
 [ "$PEAK" -gt 0 ] && [ $((PEAK - COOL)) -lt 15 ] && ISSUES+=("🟡 через 30 с после снятия нагрузки всё ещё ${COOL} °C — остывает медленно (слабый обдув)")
 [ "$E1" -gt "$E0" ] && ISSUES+=("🔴 во время нагрузки появились аппаратные ошибки процессора/памяти (MCE/EDAC): $((E1 - E0))")
 [ "$MEMERR" -gt 0 ] && ISSUES+=("🔴 ошибки памяти при проверке под нагрузкой (stress-ng --verify): $MEMERR — записанное в RAM не совпало с прочитанным, вероятна неисправность модуля памяти")
@@ -59,7 +70,7 @@ else ISSUES+=("✅ $((EL/60)) мин под полной нагрузкой бе
   echo; printf '%s\n' "${ISSUES[@]}"; echo
   echo "CPU: $CPU · потоков: $CORES · RAM: ${RAM} ГБ · нагрузка: $TOOL"
   echo "STRESS-SUMMARY idle=${IDLE} peak=${PEAK} peak_at=${PEAKAT} cool=${COOL} dur=${EL} reason=${REASON} stop=${STOP} mce_new=$((E1 - E0)) memerr=${MEMERR} cpu=\"${CPU}\""
-  echo "Без нагрузки: ${IDLE} °C · пик: ${PEAK} °C на +$((PEAKAT/60))м$((PEAKAT%60))с · через 30 с после нагрузки: ${COOL} °C · длительность: $((EL/60))м$((EL%60))с · остановлен: $([ "$REASON" = overheat ] && echo "по перегреву (порог ${STOP} °C)" || echo "по времени")"
+  echo "Без нагрузки: ${IDLE} °C · пик: ${PEAK} °C на +$((PEAKAT/60))м$((PEAKAT%60))с · через 30 с после нагрузки: ${COOL} °C · длительность: $((EL/60))м$((EL%60))с · остановлен: $(case "$REASON" in overheat) echo "по перегреву (порог ${STOP} °C)";; interrupted) echo "прерван оператором (Ctrl+C)";; load_died) echo "нагрузка завершилась раньше времени";; *) echo "по времени";; esac)"
   echo; echo "Замеры:"; printf '%s' "$SAMPLES"
   [ "$MEMERR" -gt 0 ] && { echo; echo "Ошибки проверки памяти (stress-ng):"; grep -aiE 'verif.*(fail|error)|memory error|miscompare|unexpected value|fail:' "$SLOG" | head -n 20; }
   [ "$E1" -gt "$E0" ] && { echo; echo "Аппаратные ошибки в dmesg:"; dmesg | grep -aiE 'mce: \[Hardware Error\]|Machine check|\[Hardware Error\]|EDAC MC[0-9]+: [0-9]+ (CE|UE)' | tail -n 20; }
