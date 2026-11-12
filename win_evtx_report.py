@@ -258,15 +258,17 @@ if CTX:
             (' — %d из %d сбоев случились в первые 15 минут после загрузки: система падает почти сразу после запуска (железо не держит нагрузку либо драйвер/программа из автозапуска) — нужен тест под нагрузкой и проверка автозапуска' % (early, len(ups))) if early >= 3 and early * 2 >= len(ups) else ''))
     # одно и то же событие перед несколькими сбоями — главный кандидат в причины
     usable = [c for c in CTX if c['up'] is None or c['up'] > 180]
+    # известный безобидный шум: встречается постоянно и причиной сбоев не бывает
+    NOISE = {('Microsoft-Windows-DistributedCOM', 10016), ('Microsoft-Windows-DNS-Client', 1014), ('Microsoft-Windows-Time-Service', 134), ('Microsoft-Windows-Time-Service', 129), ('Microsoft-Windows-WindowsUpdateClient', 20), ('Schannel', 36887), ('Schannel', 36874), ('Microsoft-Windows-Security-SPP', 8198), ('ESENT', 642)}
     seen = collections.Counter(); sample = {}
     for c in usable:
-        for k in {(e[2], e[3], e[1]) for e in c['ev']}: seen[k] += 1
+        for k in {(e[2], e[3], e[1]) for e in c['ev'] if (e[2], e[3]) not in NOISE}: seen[k] += 1
         for e in c['ev']: sample[(e[2], e[3], e[1])] = e[4]
     rep = [(k, n) for k, n in seen.most_common() if n >= 2 and n * 2 >= len(usable)]
     for (prov, eid, lvl), n in rep[:4]:
         print('!! 🟡 перед внезапными перезагрузками повторяется одно и то же событие: %s / %d (%s) — перед %d из %d сбоев, в последние 10 минут до остановки%s' % (prov, eid, LVL.get(lvl, lvl), n, len(usable), (': ' + sample[(prov, eid, lvl)][:140]) if sample.get((prov, eid, lvl)) else ''))
-    if usable and not rep and len(usable) >= 2 and all(not c['ev'] for c in usable):
-        print('!! ℹ️ перед внезапными сбоями в журналах нет ни ошибок, ни предупреждений (последние 10 минут до остановки, %d сбоев): Windows не успевала ничего записать — так выглядит мгновенный сброс/пропадание питания или полное зависание, а не программная ошибка' % len(usable))
+    if usable and not rep and len(usable) >= 2 and all(not [e for e in c['ev'] if (e[2], e[3]) not in NOISE] for c in usable):
+        print('!! ℹ️ перед внезапными сбоями в журналах нет ни ошибок, ни значимых предупреждений (последние 10 минут до остановки, %d сбоев): Windows не успевала ничего записать — так выглядит мгновенный сброс/пропадание питания или полное зависание, а не программная ошибка' % len(usable))
 # Когда Windows в последний раз что-то писала на диск — реестр и CBS.log меняются, пока система работает
 traces = []
 for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config/SAM', 'Logs/CBS/CBS.log', 'System32/winevt/Logs/System.evtx', 'System32/LogFiles'):

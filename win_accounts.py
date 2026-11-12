@@ -111,6 +111,17 @@ def sam_users(win):
     return sorted(out, key=lambda u: u['rid'])
 
 
+def lockout_policy(win):
+    """Политика блокировки учёток из SAM (Domains\\Account, значение F): порог неверных паролей и длительность блокировки в минутах."""
+    try:
+        h = Hive(os.path.join(win, 'System32', 'config', 'SAM')); F = h.values(h.key('SAM\\Domains\\Account')).get('F', (0, b''))[1]
+        if len(F) < 0x56: return None
+        dur = -struct.unpack_from('<q', F, 0x30)[0] / 600000000.0; thr = struct.unpack_from('<H', F, 0x54)[0]
+        if not (0 <= thr <= 999) or not (0 <= dur <= 60 * 24 * 365): return None
+        return {'threshold': thr, 'minutes': int(round(dur))}
+    except Exception: return None
+
+
 fmt = lambda t: t.strftime('%Y-%m-%d %H:%M') if t else '—'
 LOCAL_IP = re.compile(r'^(-|::1|127\.|0\.0\.0\.0|fe80:|$)')
 
@@ -215,7 +226,12 @@ def main():
             print('!! 🔴 в группу администраторов добавлена учётка (SID %s) %s UTC пользователем %s' % (d.get('MemberSid', '?'), fmt(ts), d.get('SubjectUserName', '?')))
     for ts, d in ev.get(1102, []):
         print('!! 🔴 журнал Security очищен %s UTC пользователем %s — следы входа могли стереть' % (fmt(ts), d.get('SubjectUserName', '?')))
-    if ev.get(4740): print('!! 🟡 учётка блокировалась из-за неверных паролей: %d раз (последний %s UTC)' % (len(ev[4740]), fmt(max(t for t, _ in ev[4740]))))
+    pol = lockout_policy(win)
+    if pol: det.append('   политика блокировки: порог %s, длительность %s' % ('%d неверных паролей' % pol['threshold'] if pol['threshold'] else 'нет (блокировка выключена)', '%d мин' % pol['minutes'] if pol['minutes'] else 'до снятия администратором'))
+    if ev.get(4740):
+        who = collections.Counter(d.get('TargetUserName', '?') for _, d in ev[4740]); lastlock = max(t for t, _ in ev[4740])
+        print('!! 🟡 учётка блокировалась из-за неверных паролей: %d раз (последний %s UTC) — %s. Пользователь при входе видит «учётная запись заблокирована»: блокировка временная%s, но пока идут неверные попытки, она повторяется — сначала уберите их источник (закройте RDP по IP), потом вход заработает сам' % (
+            len(ev[4740]), fmt(lastlock), ', '.join('%s — %d' % kv for kv in who.most_common(3)), (' (снимается через %d мин)' % pol['minutes']) if pol and pol['minutes'] else ''))
     # входы: удачные удалённые и перебор
     ok = [(ts, d.get('TargetUserName', '?'), d.get('IpAddress', '-'), d.get('LogonType', '?')) for ts, d in ev.get(4624, [])
           if d.get('LogonType') in ('3', '10') and not LOCAL_IP.match(d.get('IpAddress', '-')) and not d.get('TargetUserName', '').endswith('$') and d.get('TargetUserName', '').upper() != 'ANONYMOUS LOGON']
@@ -224,6 +240,20 @@ def main():
     if nbad:
         top = ', '.join('%s — %d' % kv for kv in bad.most_common(5))
         print('!! %s неудачных входов (неверный логин/пароль) за %d дн.: %d с %d IP — %s%s' % ('🟡' if nbad >= 100 else 'ℹ️', days, nbad, len(bad), top, ' — идёт перебор паролей; закройте RDP по IP или смените порт' if nbad >= 100 else ''))
+    if nbad >= 20:
+        # кто и как ошибается паролем: словарь имён с сети = перебор; служба/задание на самом сервере со старым паролем = блокировка после смены пароля
+        LT = {'2': 'с консоли', '3': 'по сети (RDP с NLA, SMB)', '4': 'задание планировщика', '5': 'служба', '7': 'разблокировка экрана', '8': 'по сети (открытый пароль)', '10': 'RDP', '11': 'сохранённые данные'}
+        names = collections.Counter(d.get('TargetUserName', '?') or '?' for _, d in ev[4625]); types = collections.Counter(d.get('LogonType', '?') for _, d in ev[4625])
+        known = {u['name'].lower() for u in users}
+        hitk = sum(n for nm, n in names.items() if nm.lower() in known)
+        print('!! ℹ️ неверные пароли — под какими именами: %s%s; как входили: %s' % (', '.join('%s — %d' % kv for kv in names.most_common(5)), ' (всего разных имён: %d)' % len(names) if len(names) > 5 else '',
+            ', '.join('%s — %d' % (LT.get(k, 'тип ' + k), n) for k, n in types.most_common(4))))
+        loc = [(d.get('TargetUserName', '?'), d.get('LogonType'), (d.get('ProcessName') or d.get('LogonProcessName') or '?').strip()) for _, d in ev[4625] if d.get('LogonType') in ('4', '5')]
+        if len(loc) >= 5:
+            c = collections.Counter(loc).most_common(1)[0]
+            print('!! 🟡 неверный пароль подставляет сам сервер: %s под учёткой %s (%s) — %d раз. Так бывает после смены пароля: в службе или задании остался старый пароль, и учётка блокируется снова и снова — обновите пароль в этой службе/задании' % (LT.get(c[0][1]), c[0][0], c[0][2], len(loc)))
+        elif len(names) <= 2 and hitk >= nbad * 0.9 and len(bad) <= 3:
+            print('!! ℹ️ почти все неверные попытки — под существующей учёткой (%s) и без словаря имён: это либо целевой перебор именно этой учётки, либо программа/устройство с сохранённым старым паролем (RDP-клиент, сетевой диск, скрипт) — уточните у клиента' % names.most_common(1)[0][0])
     if ok:
         by = collections.defaultdict(list)
         for ts, u, ip, lt in ok: by[(u, ip)].append(ts)
