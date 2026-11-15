@@ -94,6 +94,13 @@ fi
 has vgchange && vgchange -ay >/dev/null 2>&1
 
 echo "Шаг 2/4: память и процессор (ECC, ошибки железа)..."
+sec "Memory modules"
+# модули памяти: сколько, тип, частота, ECC. Четыре небуферизованных DDR5 на высокой частоте — частая причина «случайных» сбоев
+if has python3 && [ -f "$DIR/hw_memory.py" ]; then
+  mm=$(python3 "$DIR/hw_memory.py" modules 2>&1); echo "$mm" >> "$SEC"
+  while IFS= read -r l; do ISSUES+=("${l#!! }"); done < <(echo "$mm" | grep '^!! ')
+else dmidecode -t 17 2>/dev/null | grep -E 'Size:|Type:|Speed:|Part Number:|Locator:' | grep -v 'No Module' >> "$SEC"; fi
+
 sec "Hardware errors (rescue boot)"
 for d in /sys/devices/system/edac/mc/mc*; do [ -r "$d/ce_count" ] || continue
   ce=$(cat "$d/ce_count"); ue=$(cat "$d/ue_count" 2>/dev/null); echo "$(basename $d): CE=$ce UE=$ue" >> "$SEC"

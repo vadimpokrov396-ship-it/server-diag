@@ -269,6 +269,28 @@ if CTX:
         print('!! 🟡 перед внезапными перезагрузками повторяется одно и то же событие: %s / %d (%s) — перед %d из %d сбоев, в последние 10 минут до остановки%s' % (prov, eid, LVL.get(lvl, lvl), n, len(usable), (': ' + sample[(prov, eid, lvl)][:140]) if sample.get((prov, eid, lvl)) else ''))
     if usable and not rep and len(usable) >= 2 and all(not [e for e in c['ev'] if (e[2], e[3]) not in NOISE] for c in usable):
         print('!! ℹ️ перед внезапными сбоями в журналах нет ни ошибок, ни значимых предупреждений (последние 10 минут до остановки, %d сбоев): Windows не успевала ничего записать — так выглядит мгновенный сброс/пропадание питания или полное зависание, а не программная ошибка' % len(usable))
+# ---- падают разные программы с ошибками памяти: одна программа — её ошибка, много разных (в т.ч. системные) — подозрение на оперативную память
+MEMEXC = {'c0000005': 'нарушение доступа к памяти', 'c000001d': 'недопустимая инструкция', 'c0000374': 'повреждение кучи', 'c0000409': 'переполнение стека/защита', 'c0000096': 'привилегированная инструкция', 'c000041d': 'исключение в обработчике'}
+def app_crashes(events):
+    """events: [(ts, 'app | ver | ts | module | ... | exccode | ...')] или с именами полей (AppName=…, ExceptionCode=…) → [(ts, app, module, код)]"""
+    out = []
+    for ts, d in events:
+        p = [x.strip() for x in d.split('|')]
+        kv = dict(x.split('=', 1) for x in p if '=' in x and re.match(r'^[A-Za-z]+=', x))
+        app = kv.get('AppName') or (p[0] if p else ''); mod = kv.get('ModuleName') or (p[3] if len(p) > 3 else '')
+        exc = (kv.get('ExceptionCode') or (p[6] if len(p) > 6 else '')).lower().replace('0x', '')
+        if app: out.append((ts, re.sub(r'_.*$', '', app).lower(), mod.lower(), exc))
+    return out
+try:
+    AC = [c for (sev, prov, eid, txt), ev in allh.items() if prov == 'Application Error' and eid == 1000 for c in app_crashes(ev)]
+    mem = [c for c in AC if c[3] in MEMEXC]
+    apps = collections.Counter(c[1] for c in mem)
+    if len(apps) >= 3 and len(mem) >= 4:
+        kinds = collections.Counter(MEMEXC[c[3]] for c in mem)
+        sev = '🟡' if len(apps) >= 4 or any(c[3] == 'c000001d' for c in mem) else 'ℹ️'
+        print('!! %s падают разные программы с ошибками памяти: %d падений в %d разных программах (%s; %s) — когда сбоит не одна программа, а разные, включая системные, это признак нестабильной оперативной памяти, а не ошибки конкретной программы' % (
+            sev, len(mem), len(apps), ', '.join('%s — %d' % kv for kv in apps.most_common(5)), ', '.join('%s — %d' % kv for kv in kinds.most_common(3))))
+except Exception as e: print('   (разбор падений программ не удался: %s)' % e)
 # Когда Windows в последний раз что-то писала на диск — реестр и CBS.log меняются, пока система работает
 traces = []
 for p in ('System32/config/SYSTEM', 'System32/config/SOFTWARE', 'System32/config/SAM', 'Logs/CBS/CBS.log', 'System32/winevt/Logs/System.evtx', 'System32/LogFiles'):

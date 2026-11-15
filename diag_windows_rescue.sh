@@ -84,6 +84,13 @@ has mdadm && run "mdadm --examine --scan 2>/dev/null"
 grep -qiE 'ddf|isw|imsm' <(lsblk -o FSTYPE 2>/dev/null) && warn "есть диски в аппаратном/Intel RAID — Windows-тома могут быть видны только через dmraid/mdadm"
 
 echo "Шаг 2/4: разделы Windows (только чтение)..."
+sec "Memory modules"
+# модули памяти: сколько, тип, частота, ECC. Четыре небуферизованных DDR5 на высокой частоте — частая причина «случайных» сбоев
+if has python3 && [ -f "$DIR/hw_memory.py" ]; then
+  mm=$(python3 "$DIR/hw_memory.py" modules 2>&1); echo "$mm" >> "$SEC"
+  while IFS= read -r l; do ISSUES+=("${l#!! }"); done < <(echo "$mm" | grep '^!! ')
+else dmidecode -t 17 2>/dev/null | grep -E 'Size:|Type:|Speed:|Part Number:|Locator:' | grep -v 'No Module' >> "$SEC"; fi
+
 sec "NTFS partitions"
 WINROOT=""; n=0; BOOTL=()
 for p in $(lsblk -lno NAME,FSTYPE | awk '$2=="ntfs"{print $1}'); do
@@ -147,6 +154,11 @@ if [ -n "$WINROOT" ]; then
   nd=$(command find "$WINROOT/Minidump" -maxdepth 1 -iname '*.dmp' -mtime -$DAYS 2>/dev/null | wc -l)
   [ "$nd" -gt 0 ] && bad "синих экранов за $DAYS дн. (минидампы): $nd — последний $(ls -t "$WINROOT"/Minidump/*.dmp 2>/dev/null | head -1 | xargs -r stat -c %y | cut -c1-16)"
   [ -f "$WINROOT/MEMORY.DMP" ] && warn "есть полный дамп памяти MEMORY.DMP от $(stat -c %y "$WINROOT/MEMORY.DMP" | cut -c1-16)"
+  # коды синих экранов прямо из файлов дампов (то, что обычно показывает WinDbg): разные коды «повреждения памяти» → подозрение на RAM
+  if [ -f "$DIR/hw_memory.py" ] && has python3; then
+    dm=$(python3 "$DIR/hw_memory.py" dumps "$WINROOT" "$DAYS" 2>&1); echo "$dm" >> "$SEC"
+    while IFS= read -r l; do ISSUES+=("${l#!! }"); done < <(echo "$dm" | grep '^!! ')
+  fi
   [ -f "$WINROOT/WinSxS/pending.xml" ] && warn "есть незавершённая установка обновлений (WinSxS/pending.xml) — частая причина долгой/зависшей загрузки"
   run "ls -la '$WINROOT/WinSxS/pending.xml' '$WINROOT/SoftwareDistribution/Download' 2>/dev/null | head"
   run "ls -lt '$WINROOT/Logs/CBS' 2>/dev/null | head -5"
