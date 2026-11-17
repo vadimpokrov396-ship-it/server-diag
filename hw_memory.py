@@ -28,7 +28,8 @@ def parse_dmidecode(text):
         num = lambda s: int(re.match(r'(\d+)', s).group(1)) if re.match(r'\d+', s or '') else 0
         mods.append({'size_gb': int(round(gb)), 'type': f.get('Type', '?'), 'speed': num(f.get('Speed', '')),
                      'conf': num(f.get('Configured Memory Speed', f.get('Configured Clock Speed', ''))),
-                     'part': f.get('Part Number', '').strip(), 'vendor': f.get('Manufacturer', '').strip(), 'loc': f.get('Locator', '')})
+                     'part': f.get('Part Number', '').strip(), 'vendor': f.get('Manufacturer', '').strip(), 'loc': f.get('Locator', ''),
+                     'serial': re.sub(r'(?i)^(unknown|not specified|none|0+)$', '', f.get('Serial Number', '').strip())})
     return mods, ecc, slots
 
 def mem_overspec(mods, ecc, slots):
@@ -37,6 +38,21 @@ def mem_overspec(mods, ecc, slots):
     if not mods or ecc: return False
     conf = max(m['conf'] or m['speed'] for m in mods)
     return slots <= 4 and len(mods) == 4 and all('DDR5' in m['type'].upper() for m in mods) and conf >= 5200
+
+def edac_dimms(root='/sys/devices/system/edac/mc'):
+    """Память с ECC сама считает ошибки по каждому модулю — только так можно назвать конкретный слот.
+    Без ECC (обычная настольная память) тест видит, что ошибки есть, но не видит, в какой планке."""
+    import glob as _g
+    for d in sorted(_g.glob(os.path.join(root, 'mc*', 'dimm*')) + _g.glob(os.path.join(root, 'mc*', 'rank*'))):
+        rd = lambda n: (open(os.path.join(d, n)).read().strip() if os.path.exists(os.path.join(d, n)) else '')
+        try: ce = int(rd('dimm_ce_count') or 0); ue = int(rd('dimm_ue_count') or 0)
+        except ValueError: continue
+        if not ce and not ue: continue
+        label = rd('dimm_label') or rd('dimm_location') or os.path.basename(d)
+        print('MEMERR slot="%s" ce=%d ue=%d' % (label, ce, ue))
+        if ue: print('!! 🔴 память: неисправимые ошибки ECC в модуле %s = %d (исправленных: %d) — этот модуль нужно заменить' % (label, ue, ce))
+        else: print('!! 🟡 память: исправленные ошибки ECC в модуле %s = %d — модуль деградирует, заменить планово' % (label, ce))
+
 
 def cmd_modules(text=None):
     if text is None:
@@ -49,6 +65,10 @@ def cmd_modules(text=None):
     for m in mods:
         print('   %-12s %3d ГБ %s  паспорт %s МГц, работает на %s МГц  %s %s' % (m['loc'], m['size_gb'], m['type'], m['speed'] or '?', m['conf'] or '?', m['vendor'], m['part']))
     print('   слотов %d, занято %d, ECC: %s' % (slots, len(mods), 'есть' if ecc else 'нет' if ecc is False else 'неизвестно'))
+    # машинные строки по каждому модулю — из них собирается список модулей для заявки в дата-центр
+    for m in mods:
+        print('MEMDIMM loc="%s" size_gb=%d type=%s speed=%d conf=%d vendor="%s" part="%s" serial="%s"' % (m['loc'], m['size_gb'], m['type'].replace(' ', ''), m['speed'], m['conf'] or m['speed'], m['vendor'], m['part'], m['serial']))
+    edac_dimms()
     over = mem_overspec(mods, ecc, slots)
     print('MEM slots=%d used=%d type=%s ecc=%d speed=%d rated=%d size_gb=%d mixed=%d overspec=%d part="%s"' % (
         slots, len(mods), typ.replace(' ', ''), 1 if ecc else 0, conf, rated, sum(m['size_gb'] for m in mods), 1 if len(parts) > 1 else 0, 1 if over else 0, ', '.join(parts)[:60]))
