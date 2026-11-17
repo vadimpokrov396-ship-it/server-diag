@@ -162,6 +162,29 @@ if [ -n "$ROOT" ]; then
   chk warn "зависания ядра (soft lockup, RCU stall, hung task)" 'soft lockup|hard LOCKUP|rcu_(sched|preempt|bh) (self-)?detected stall|rcu: INFO: .*stall|blocked for more than [0-9]+ seconds'
   chk warn "перегрев процессора" 'temperature above threshold|cpu clock throttled|Package temperature above'
   chk warn "программы падали с ошибкой памяти (segfault)" 'segfault at|traps: .*(general protection|invalid opcode)'
+  # ошибки шины PCIe (AER) по устройствам. Тысячи исправленных ошибок на одном диске при чистом SMART — это подключение
+  # (слот, кабель, переходник, backplane), а не сам диск. Неисправимые (Uncorrected) — уже серьёзно.
+  if grep -aqE 'PCIe Bus Error: severity=' "$KL"; then
+    sec "PCIe bus errors (AER) by device"
+    while read -r n addr sev typ; do
+      [ -n "$addr" ] || continue
+      f1=$(grep -aE "$addr: PCIe Bus Error" "$KL" | head -1 | cut -c1-19); f2=$(grep -aE "$addr: PCIe Bus Error" "$KL" | tail -1 | cut -c1-19)
+      hrs=$(( ( $(date -d "$f2" +%s 2>/dev/null || echo 0) - $(date -d "$f1" +%s 2>/dev/null || echo 0) ) / 3600 )); [ "$hrs" -lt 1 ] && hrs=1
+      rate=$(( n / hrs )); dev=""; mdl=""; sn=""
+      for c in "${NVSYS:-/sys/class/nvme}"/nvme*; do [ -e "$c/device" ] || continue
+        if [ "$(basename "$(readlink -f "$c/device")")" = "$addr" ]; then dev=$(ls -d "$c"/nvme*n* 2>/dev/null | head -1 | xargs -r basename); mdl=$(cat "$c/model" 2>/dev/null | xargs); sn=$(cat "$c/serial" 2>/dev/null | xargs); fi
+      done
+      # диск в RAID 0? тогда замена диска = потеря всех данных, об этом надо сказать дата-центру
+      r0=""; [ -n "$dev" ] && r0=$(awk -v d="$dev" '$3=="active" && $4=="raid0" { for (i=5;i<=NF;i++) if (index($i, d)==1) { print $1; break } }' "${MDSTAT:-/proc/mdstat}" 2>/dev/null | xargs | tr ' ' ',')
+      echo "AERDEV addr=$addr dev=${dev:--} model=\"$mdl\" serial=\"$sn\" count=$n hours=$hrs rate=$rate sev=$sev type=\"$typ\" raid0=\"$r0\"" >> "$SEC"
+      what="устройстве $addr"; [ -n "$dev" ] && what="диске /dev/$dev ($mdl, S/N $sn, PCI $addr)"
+      if [ "$sev" != Corrected ]; then
+        bad "неисправимые ошибки шины PCIe (AER) на $what: $n за $hrs ч, тип: $typ — неисправно подключение или само устройство"
+      elif [ "$n" -ge 100 ] || [ "$rate" -ge 5 ]; then
+        warn "исправленные ошибки шины PCIe (AER) на $what: $n за $hrs ч (~$rate в час), тип: $typ — при чистом SMART это проблема физического подключения (слот, кабель, переходник, backplane), а не самого диска: попросите дата-центр переподключить диск и при необходимости заменить кабель/переходник$([ -n "$r0" ] && echo "; диск входит в RAID 0 ($r0) — сам диск без согласования менять нельзя, это потеря всех данных")"
+      fi
+    done < <(grep -aE 'PCIe Bus Error: severity=' "$KL" | sed -nE 's/.* ([0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-9a-f]): PCIe Bus Error: severity=([A-Za-z]+)[^,]*, type=([A-Za-z ]+[A-Za-z]).*/\1 \2 \3/p' | sort | uniq -c | sort -rn | head -8)
+  fi
   # одна и та же проверенная программа падает по-разному и на разных ядрах — так выглядит нестабильная память или процессор, а не ошибка программы
   SG=$(grep -aE 'segfault at|traps: .*(general protection|invalid opcode)' "$KL" | tail -n 200)
   if [ -n "$SG" ]; then
